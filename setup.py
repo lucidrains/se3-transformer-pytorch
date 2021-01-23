@@ -17,8 +17,10 @@ setup(
     'SE3'
   ],
   install_requires=[
+    'einops>=0.3',
+    'lie_learn',
     'torch>=1.6',
-    'einops>=0.3'
+    'torch_geometric'
   ],
   classifiers=[
     'Development Status :: 4 - Beta',

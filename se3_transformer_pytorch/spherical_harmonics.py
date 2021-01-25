@@ -120,6 +120,6 @@ def get_spherical_harmonics(l, theta, phi):
     """
     results = []
     for m in range(-l, l+1):
-        el = get_element(l, m, theta, phi)
+        el = get_spherical_harmonics_element(l, m, theta, phi)
         results.append(el)
     return torch.stack(results, dim = -1)

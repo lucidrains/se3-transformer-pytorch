@@ -3,6 +3,7 @@ import sys
 import time
 import pickle
 import gzip
+import torch
 import contextlib
 from functools import wraps, lru_cache
 from filelock import FileLock

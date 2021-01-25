@@ -25,6 +25,14 @@ def torch_default_dtype(dtype):
     yield
     torch.set_default_dtype(prev_dtype)
 
+def cast_torch_tensor(fn):
+    @wraps(fn)
+    def inner(t):
+        if not torch.is_tensor(t):
+            t = torch.tensor(t, dtype = torch.get_default_dtype())
+        return fn(t)
+    return inner
+
 # benchmark tool
 
 def benchmark(fn):

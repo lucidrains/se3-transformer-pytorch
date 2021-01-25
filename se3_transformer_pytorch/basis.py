@@ -100,12 +100,12 @@ def kron(a, b):
     res = einsum('... i j, ... k l -> ... i k j l', a, b)
     return rearrange(res, '... i j k l -> ... (i j) (k l)')
 
-def R_tensor_(order_out, order_in, a, b, c):
+def get_R_tensor(order_out, order_in, a, b, c):
     return kron(irr_repr(order_out, a, b, c), irr_repr(order_in, a, b, c))
 
 def sylvester_submatrix(order_out, order_in, J, a, b, c):
     ''' generate Kronecker product matrix for solving the Sylvester equation in subspace J '''
-    R_tensor = R_tensor_(order_out, order_in, a, b, c)  # [m_out * m_in, m_out * m_in]
+    R_tensor = get_R_tensor(order_out, order_in, a, b, c)  # [m_out * m_in, m_out * m_in]
     R_irrep_J = irr_repr(J, a, b, c)  # [m, m]
 
     R_tensor_identity = torch.eye(R_tensor.shape[0])
@@ -127,7 +127,6 @@ def basis_transformation_Q_J(J, order_in, order_out, random_angles = RANDOM_ANGL
     assert null_space.size(0) == 1, null_space.size()  # unique subspace solution
     Q_J = null_space[0]  # [(m_out * m_in) * m]
     Q_J = Q_J.view((2 * order_out + 1) * (2 * order_in + 1), 2 * J + 1)  # [m_out * m_in, m]
-    assert all(torch.allclose(R_tensor_(order_out, order_in, a, b, c) @ Q_J, Q_J @ irr_repr(J, a, b, c)) for a, b, c in torch.rand(4, 3))
     return Q_J  # [m_out * m_in, m]
 
 def precompute_sh(r_ij, max_J):

@@ -6,7 +6,7 @@ import numpy as np
 
 from lie_learn.representations.SO3.wigner_d import wigner_D_matrix
 
-from se3_transformer_pytorch.utils import exists, default
+from se3_transformer_pytorch.utils import exists, default, cast_torch_tensor
 from se3_transformer_pytorch.spherical_harmonics import get_spherical_harmonics, clear_spherical_harmonics_cache
 
 def spherical_harmonics(order, alpha, beta, dtype=None):
@@ -27,15 +27,6 @@ def irr_repr(order, alpha, beta, gamma, dtype = None):
     dtype = default(dtype, torch.get_default_dtype())
     alpha, beta, gamma = map(np.array, (alpha, beta, gamma))
     return torch.tensor(wigner_D_matrix(order, alpha, beta, gamma), dtype = dtype)
-
-
-def cast_torch_tensor(fn):
-    @wraps(fn)
-    def inner(t):
-        if not torch.is_tensor(t):
-            t = torch.tensor(t, dtype = torch.get_default_dtype())
-        return fn(t)
-    return inner
 
 @cast_torch_tensor
 def rot_z(gamma):

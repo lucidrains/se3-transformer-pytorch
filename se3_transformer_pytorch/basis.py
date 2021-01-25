@@ -3,6 +3,7 @@ from math import pi
 import torch
 from torch import einsum
 from einops import rearrange
+from itertools import product
 
 from se3_transformer_pytorch.irr_repr import irr_repr, spherical_harmonics
 from se3_transformer_pytorch.utils import torch_default_dtype, cache_dir
@@ -43,8 +44,6 @@ def get_matrices_kernel(As, eps = 1e-10):
     Computes the common kernel of all the As matrices
     '''
     matrix = torch.cat(As, dim=0)
-    print('matrix')
-    print(matrix.shape)
     return get_matrix_kernel(matrix, eps)
 
 def get_spherical_from_cartesian_torch(cartesian, divide_radius_by = 1.0):
@@ -169,20 +168,19 @@ def get_basis(r_ij, max_degree):
 
     # Equivariant basis (dict['d_in><d_out>'])
     basis = {}
-    for d_in in range(max_degree+1):
-        for d_out in range(max_degree+1):
-            K_Js = []
-            for J in range(abs(d_in-d_out), d_in+d_out+1):
-                # Get spherical harmonic projection matrices
-                Q_J = basis_transformation_Q_J(J, d_in, d_out)
-                Q_J = Q_J.float().T.to(device)
+    for d_in, d_out in product(range(max_degree+1), range(max_degree+1)):
+        K_Js = []
+        for J in range(abs(d_in-d_out), d_in+d_out+1):
+            # Get spherical harmonic projection matrices
+            Q_J = basis_transformation_Q_J(J, d_in, d_out)
+            Q_J = Q_J.float().T.to(device)
 
-                # Create kernel from spherical harmonics
-                K_J = torch.matmul(Y[J], Q_J)
-                K_Js.append(K_J)
+            # Create kernel from spherical harmonics
+            K_J = torch.matmul(Y[J], Q_J)
+            K_Js.append(K_J)
 
-            # Reshape so can take linear combinations with a dot product
-            size = (-1, 1, 2*d_out+1, 1, 2*d_in+1, 2*min(d_in,d_out)+1)
-            basis[f'{d_in},{d_out}'] = torch.stack(K_Js, dim = -1).view(*size)
+        # Reshape so can take linear combinations with a dot product
+        size = (-1, 1, 2*d_out+1, 1, 2*d_in+1, 2*min(d_in,d_out)+1)
+        basis[f'{d_in},{d_out}'] = torch.stack(K_Js, dim = -1).view(*size)
 
     return basis

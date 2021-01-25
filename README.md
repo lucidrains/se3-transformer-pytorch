@@ -2,6 +2,13 @@
 
 Implementation of <a href="https://arxiv.org/abs/2006.10503">SE3-Transformers</a> for Equivariant Self-Attention, in Pytorch. May be needed for replicating Alphafold2 results and other drug discovery applications.
 
+
+## Testing
+
+```bash
+$ python setup.py pytest
+```
+
 ## Citations
 
 ```bibtex

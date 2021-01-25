@@ -18,6 +18,7 @@ setup(
   ],
   install_requires=[
     'einops>=0.3',
+    'filelock',
     'lie_learn',
     'torch>=1.6'
   ],

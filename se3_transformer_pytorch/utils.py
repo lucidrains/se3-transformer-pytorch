@@ -53,7 +53,7 @@ def cache(cache, key_fn):
 
 # cache in directory
 
-def cached_dir(dirname, maxsize=128):
+def cache_dir(dirname, maxsize=128):
     '''
     Cache a function with a directory
 

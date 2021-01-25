@@ -3,6 +3,7 @@ from functools import reduce
 from operator import mul
 import torch
 
+from functools import lru_cache
 from se3_transformer_pytorch.utils import cache
 
 # constants
@@ -17,9 +18,11 @@ def lpmv_cache_key_fn(l, m, x):
 
 # spherical harmonics
 
+@lru_cache(maxsize = 1000)
 def semifactorial(x):
     return reduce(mul, range(x, 1, -2), 1.)
 
+@lru_cache(maxsize = 1000)
 def pochhammer(x, k):
     return reduce(mul, range(x + 1, x + k), float(x))
 
@@ -54,9 +57,9 @@ def lpmv(l, m, x):
         y = (-1)**m_abs * semifactorial(2*m_abs-1)
         y *= torch.pow(1-x*x, m_abs/2)
         return negative_lpmv(l, m, y)
-    else:
-        # Recursively precompute lower degree harmonics
-        lpmv(l-1, m, x)
+
+    # Recursively precompute lower degree harmonics
+    lpmv(l-1, m, x)
 
     # Compute P_{l}^m from recursion in P_{l-1}^m and P_{l-2}^m
     # Inplace speedup
@@ -83,19 +86,22 @@ def get_spherical_harmonics_element(l, m, theta, phi):
     Returns:
         tensor of shape theta
     """
-    assert abs(m) <= l, "absolute value of order m must be <= degree l"
+    m_abs = abs(m)
+    assert m_abs <= l, "absolute value of order m must be <= degree l"
 
-    N = sqrt((2*l+1) / (4*pi))
-    leg = lpmv(l, abs(m), torch.cos(theta))
+    N = sqrt((2*l + 1) / (4 * pi))
+    leg = lpmv(l, m_abs, torch.cos(theta))
+
     if m == 0:
-        return N*leg
+        return N * leg
 
     if m > 0:
-        Y = torch.cos(m*phi) * leg
+        Y = torch.cos(m * phi)
     else:
-        Y = torch.sin(abs(m)*phi) * leg
+        Y = torch.sin(m_abs * phi)
 
-    N *= sqrt(2. / pochhammer(l-abs(m)+1, 2*abs(m)))
+    Y *= leg
+    N *= sqrt(2. / pochhammer(l - m_abs + 1, 2 * m_abs))
     Y *= N
     return Y
 

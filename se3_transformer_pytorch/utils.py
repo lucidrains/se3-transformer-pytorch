@@ -7,6 +7,14 @@ import contextlib
 from functools import wraps, lru_cache
 from filelock import FileLock
 
+# helper functions
+
+def exists(val):
+    return val is not None
+
+def default(val, d):
+    return val if exists(val) else d
+
 # default dtype context manager
 
 @contextlib.contextmanager

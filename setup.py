@@ -19,8 +19,7 @@ setup(
   install_requires=[
     'einops>=0.3',
     'lie_learn',
-    'torch>=1.6',
-    'torch_geometric'
+    'torch>=1.6'
   ],
   classifiers=[
     'Development Status :: 4 - Beta',

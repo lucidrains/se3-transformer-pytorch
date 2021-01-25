@@ -1,8 +1,9 @@
 from math import pi, sqrt
-from functools import reduce, wraps
+from functools import reduce
 from operator import mul
-
 import torch
+
+from se3_transformer_pytorch.utils import cache
 
 # constants
 
@@ -13,22 +14,6 @@ def clear_spherical_harmonics_cache():
 
 def lpmv_cache_key_fn(l, m, x):
     return (l, m)
-
-# caching functions
-
-def cache(cache, key_fn):
-    def cache_inner(fn):
-        @wraps(fn)
-        def inner(*args, **kwargs):
-            key_name = key_fn(*args, **kwargs)
-            if key_name in cache:
-                return cache[key_name]
-            res = fn(*args, **kwargs)
-            cache[key_name] = res
-            return res
-
-        return inner
-    return cache_inner
 
 # spherical harmonics
 

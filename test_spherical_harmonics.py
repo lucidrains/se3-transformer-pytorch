@@ -3,15 +3,9 @@ import torch
 import numpy as np
 
 from lie_learn.representations.SO3.spherical_harmonics import sh
-from se3_transformer_pytorch.spherical_harmonics import get_spherical_harmonics_element
 
-def benchmark(fn):
-    def inner(*args, **kwargs):
-        start = time.time()
-        res = fn(*args, **kwargs)
-        diff = time.time() - start
-        return diff, res
-    return inner
+from se3_transformer_pytorch.spherical_harmonics import get_spherical_harmonics_element
+from se3_transformer_pytorch.utils import benchmark
 
 def test_spherical_harmonics():
     dtype = torch.float64

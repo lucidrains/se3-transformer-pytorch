@@ -9,7 +9,7 @@ from lie_learn.representations.SO3.wigner_d import wigner_D_matrix
 from se3_transformer_pytorch.utils import exists, default, cast_torch_tensor
 from se3_transformer_pytorch.spherical_harmonics import get_spherical_harmonics, clear_spherical_harmonics_cache
 
-def spherical_harmonics(order, alpha, beta, dtype=None):
+def spherical_harmonics(order, alpha, beta, dtype = None):
     """
     spherical harmonics
     - compatible with irr_repr and compose

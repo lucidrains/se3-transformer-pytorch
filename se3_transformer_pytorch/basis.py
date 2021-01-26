@@ -126,7 +126,7 @@ def basis_transformation_Q_J(J, order_in, order_out, random_angles = RANDOM_ANGL
     assert null_space.size(0) == 1, null_space.size()  # unique subspace solution
     Q_J = null_space[0]  # [(m_out * m_in) * m]
     Q_J = Q_J.view((2 * order_out + 1) * (2 * order_in + 1), 2 * J + 1)  # [m_out * m_in, m]
-    return Q_J  # [m_out * m_in, m]
+    return Q_J.float()  # [m_out * m_in, m]
 
 def precompute_sh(r_ij, max_J):
     """
@@ -159,7 +159,7 @@ def get_basis(r_ij, max_degree):
     """
 
     # Relative positional encodings (vector)
-    device = r_ij.device
+    b, n, *_, device = *r_ij.shape, r_ij.device
 
     r_ij = get_spherical_from_cartesian_torch(r_ij)
 
@@ -173,14 +173,15 @@ def get_basis(r_ij, max_degree):
         for J in range(abs(d_in-d_out), d_in+d_out+1):
             # Get spherical harmonic projection matrices
             Q_J = basis_transformation_Q_J(J, d_in, d_out)
-            Q_J = Q_J.float().T.to(device)
+            Q_J = Q_J.float().to(device)
 
             # Create kernel from spherical harmonics
-            K_J = torch.matmul(Y[J], Q_J)
+            K_J = torch.matmul(Y[J], Q_J.T)
             K_Js.append(K_J)
 
         # Reshape so can take linear combinations with a dot product
-        size = (-1, 1, 2*d_out+1, 1, 2*d_in+1, 2*min(d_in,d_out)+1)
-        basis[f'{d_in},{d_out}'] = torch.stack(K_Js, dim = -1).view(*size)
+        K_Js = torch.stack(K_Js, dim = -1)
+        size = (b, n ** 2, 1, 2*d_out+1, 1, 2*d_in+1, 2*min(d_in,d_out)+1)
+        basis[f'{d_in},{d_out}'] = K_Js.view(*size)
 
     return basis

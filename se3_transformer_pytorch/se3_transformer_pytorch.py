@@ -2,11 +2,35 @@ import torch
 import torch.nn.functional as F
 from torch import nn, einsum
 
+from collections import namedtuple
 from einops import rearrange, repeat
-
 from se3_transformer_pytorch.basis import get_basis
+from se3_transformer_pytorch.utils import exists, default
 
 # helpers
+
+def batched_index_select(values, indices):
+    b, n, d, j = *values.shape, indices.shape[2]
+    values = values[:, :, None, :].expand(-1, -1, j, -1)
+    return values.gather(1, indices[:, :, :, None].expand(-1, -1, -1, d))
+
+# fiber helpers
+
+FiberEl = namedtuple('FiberEl', ['degrees', 'dim'])
+
+class Fiber(nn.Module):
+    def __init__(
+        self,
+        structure
+    ):
+        super().__init__()
+        if isinstance(structure, dict):
+            structure = structure.items()
+        self.structure = structure
+
+    @staticmethod
+    def create(num_degrees, dim):
+        return Fiber([FiberEl(degree, dim) for degree in range(num_degrees)])
 
 # classes
 
@@ -94,7 +118,7 @@ class PairwiseConv(nn.Module):
     def forward(self, feat, basis):
         R = self.rp(feat)
         kernel = torch.sum(R * basis[f'{self.degree_in},{self.degree_out}'], dim = -1)
-        return kernel.view(kernel.shape[0], self.d_out * self.nc_out, -1)
+        return kernel.view(*kernel.shape[:2], self.d_out * self.nc_out, -1)
 
 # main class
 
@@ -103,19 +127,38 @@ class SE3Transformer(nn.Module):
         self,
         *,
         dim,
+        num_neighbors = 32,
         heads = 8,
         dim_head = 64,
         depth = 6,
         num_degrees = 4
     ):
         super().__init__()
+        assert num_neighbors > 0, 'neighbors must be at least 1'
+
         self.num_degrees = num_degrees
+        self.num_neighbors = num_neighbors
 
     def forward(self, feats, coors, mask = None):
-        num_degrees = self.num_degrees
+        b, n, d, device = *feats.shape, feats.device
+        num_degrees, neighbors = self.num_degrees, self.num_neighbors
 
         rel_pos  = rearrange(coors, 'b n d -> b n () d') - rearrange(coors, 'b n d -> b () n d')
-        rel_dist = rel_pos.norm(dim = -1, keepdim = True)
         basis    = get_basis(rel_pos, num_degrees - 1)
+        rel_dist = rel_pos.norm(dim = -1)
+
+        # get neighbors and neighbor mask, excluding self
+        
+        self_mask = torch.eye(n, device = device).bool()
+        rel_dist = rel_dist.masked_select(~rearrange(self_mask, 'm n -> () m n'))
+        rel_dist = rearrange(rel_dist, '(b i j) -> b i j', b = b, i = n)
+        _, neighbor_indices = rel_dist.topk(neighbors, dim = -1, largest = False)
+
+        neighbor_mask = None
+        if exists(mask):
+            neighbor_mask = mask[:, :, None].expand(-1, -1, neighbors).gather(1, neighbor_indices)
+
+        # main logic
+        feat_fiber = {'0': feats}
 
         return feats

@@ -159,7 +159,7 @@ def get_basis(r_ij, max_degree):
     """
 
     # Relative positional encodings (vector)
-    b, n, *_, device = *r_ij.shape, r_ij.device
+    device = r_ij.device
 
     r_ij = get_spherical_from_cartesian_torch(r_ij)
 
@@ -181,7 +181,7 @@ def get_basis(r_ij, max_degree):
 
         # Reshape so can take linear combinations with a dot product
         K_Js = torch.stack(K_Js, dim = -1)
-        size = (b, n ** 2, 1, 2*d_out+1, 1, 2*d_in+1, 2*min(d_in,d_out)+1)
+        size = (*r_ij.shape[:-1], 1, 2*d_out+1, 1, 2*d_in+1, 2*min(d_in,d_out)+1)
         basis[f'{d_in},{d_out}'] = K_Js.view(*size)
 
     return basis

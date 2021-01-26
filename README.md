@@ -16,6 +16,9 @@ from se3_transformer_pytorch.se3_transformer_pytorch import SE3Transformer
 
 model = SE3Transformer(
     dim = 512,
+    heads = 8,
+    depth = 6,
+    dim_head = 64,
     num_degrees = 4
 )
 

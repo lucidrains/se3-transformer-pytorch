@@ -241,6 +241,7 @@ class SE3Transformer(nn.Module):
         dim_head = 64,
         depth = 6,
         num_degrees = 4,
+        input_degrees = 1,
         output_degrees = 2
     ):
         super().__init__()
@@ -250,7 +251,7 @@ class SE3Transformer(nn.Module):
         self.num_degrees = num_degrees
         self.num_neighbors = num_neighbors
 
-        fiber_in     = Fiber.create(1, dim)
+        fiber_in     = Fiber.create(input_degrees, dim)
         fiber_hidden = Fiber.create(num_degrees, dim)
         fiber_out    = Fiber.create(output_degrees, dim)
 
@@ -258,7 +259,10 @@ class SE3Transformer(nn.Module):
         self.conv_out = ConvSE3(fiber_hidden, fiber_out)
 
     def forward(self, feats, coors, mask = None, return_type = None):
-        b, n, d, device = *feats.shape, feats.device
+        if torch.is_tensor(feats):
+            feats = {'0': feats[..., None]}
+
+        b, n, d, *_, device = *feats['0'].shape, feats['0'].device
         assert d == self.dim, f'feature dimension {d} must be equal to dimension given at init {self.dim}'
 
         num_degrees, neighbors = self.num_degrees, self.num_neighbors
@@ -282,7 +286,7 @@ class SE3Transformer(nn.Module):
 
         # main logic
         edge_info = (neighbor_indices, neighbor_mask)
-        x = {'0': feats[..., None]}
+        x = feats
 
         x = self.conv_in(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
         x = self.conv_out(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)

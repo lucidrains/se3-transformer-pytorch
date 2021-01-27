@@ -140,12 +140,39 @@ class AttentionSE3(nn.Module):
         super().__init__()
         hidden_dim = dim_head * heads
         hidden_fiber = Fiber(list(map(lambda t: (t[0], hidden_dim), fiber)))
+        self.scale = dim_head ** -0.5
+        self.heads = heads
 
         self.to_q = LinearSE3(fiber, hidden_fiber)
+        self.to_k = ConvSE3(fiber, hidden_fiber, pool = False, self_interaction = False)
+        self.to_v = ConvSE3(fiber, hidden_fiber, pool = False, self_interaction = False)
         self.to_out = LinearSE3(hidden_fiber, fiber)
 
     def forward(self, features, edge_info, rel_dist, basis):
+        h = self.heads
+        neighbor_indices, neighbor_masks = edge_info
+
+        mask_value = -torch.finfo(next(iter(features.items()))[1].dtype).max
+        neighbor_masks = rearrange(neighbor_masks, 'b i j -> b () i j')
+
         queries = self.to_q(features)
+        keys, values = self.to_k(features, edge_info, rel_dist, basis), self.to_v(features, edge_info, rel_dist, basis)
+
+        outputs = {}
+        for degree in features.keys():
+            q, k, v = map(lambda t: t[degree], (queries, keys, values))
+
+            q = rearrange(q, 'b i (h d) m -> b h i d m', h = h)
+            k, v = map(lambda t: rearrange(t, 'b i j (h d) m -> b h i j d m', h = h), (k, v))
+
+            sim = einsum('b h i d m, b h i j d m -> b h i j', q, k) * self.scale
+
+            sim.masked_fill_(~neighbor_masks, mask_value)
+
+            attn = sim.softmax(dim = -1)
+            out = einsum('b h i j, b h i j d m -> b h i d m', attn, v)
+            outputs[degree] = rearrange(out, 'b h n d m -> b n (h d) m')
+
         outputs = self.to_out(queries)
         return outputs
 
@@ -245,6 +272,7 @@ class ConvSE3(nn.Module):
         fiber_in,
         fiber_out,
         self_interaction = True,
+        pool = True,
         edge_dim = 0
     ):
         """SE(3)-equivariant Graph Conv Layer
@@ -267,9 +295,12 @@ class ConvSE3(nn.Module):
         for (di, mi), (do, mo) in (self.fiber_in * self.fiber_out):
             self.kernel_unary[f'({di},{do})'] = PairwiseConv(di, mi, do, mo)
 
+        self.pool = pool
+
         # Center -> center weights
 
         if self_interaction:
+            assert self.pool, 'must pool edges if followed with self interaction'
             self.self_interact = LinearSE3(fiber_in, fiber_out)
             self.self_interact_sum = ResidualSE3()
 
@@ -307,8 +338,11 @@ class ConvSE3(nn.Module):
                 kernel = kernels[etype]
                 output = output + einsum('... o i, ... i c -> ... o c', kernel, x)
 
-            output = masked_mean(output, neighbor_masks, dim = 2)
-            output = output.view(*x.shape[:2], -1, 2 * degree_out + 1)
+            if self.pool:
+                output = masked_mean(output, neighbor_masks, dim = 2)
+
+            leading_shape = x.shape[:2] if self.pool else x.shape[:3]
+            output = output.view(*leading_shape, -1, 2 * degree_out + 1)
 
             outputs[degree_out_key] = output
 
@@ -412,7 +446,7 @@ class SE3Transformer(nn.Module):
         num_neighbors = 12,
         heads = 8,
         dim_head = 64,
-        depth = 6,
+        depth = 2,
         num_degrees = 2,
         input_degrees = 1,
         output_degrees = 2

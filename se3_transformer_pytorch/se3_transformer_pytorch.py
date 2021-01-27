@@ -46,10 +46,65 @@ class Fiber(nn.Module):
     def create(num_degrees, dim):
         return Fiber([FiberEl(degree, dim) for degree in range(num_degrees)])
 
+    def __iter__(self):
+        return iter(self.structure)
+
     def __mul__(self, fiber):
         return product(self.structure, fiber.structure)
 
 # classes
+
+class NormSE3(nn.Module):
+    """Norm-based SE(3)-equivariant nonlinearity.
+    
+    Nonlinearities are important in SE(3) equivariant GCNs. They are also quite 
+    expensive to compute, so it is convenient for them to share resources with
+    other layers, such as normalization. The general workflow is as follows:
+
+    > for feature type in features:
+    >    norm, phase <- feature
+    >    output = fnc(norm) * phase
+    
+    where fnc: {R+}^m -> R^m is a learnable map from m norms to m scalars.
+    """
+    def __init__(
+        self,
+        fiber,
+        nonlin = nn.ReLU(inplace=True),
+        eps = 1e-12
+    ):
+        """Initializer.
+
+        Args:
+            fiber: Fiber() of feature multiplicities and types
+            nonlin: nonlinearity to use everywhere
+            num_layers: non-negative number of linear layers in fnc
+        """
+        super().__init__()
+        self.fiber = fiber
+        self.nonlin = nonlin
+        self.eps = eps
+
+        # Norm mappings: 1 per feature type
+        self.transform = nn.ModuleDict()
+        for degree, chan in fiber:
+            self.transform[str(degree)] = nn.Sequential(nn.LayerNorm(chan), nonlin)
+
+    def forward(self, features):
+        output = {}
+        for degree, t in features.items():
+            # Compute the norms and normalized features
+            norm = t.norm(dim = -1, keepdim = True).clamp(min = self.eps)
+            phase = t / norm
+
+            # Transform on norms
+            fn = self.transform[degree]
+            transformed = fn(norm.squeeze(-1))[..., None]
+
+            # Nonlinearity on norm
+            output[degree] = (transformed * phase).view(*t.shape)
+
+        return output
 
 class ConvSE3(nn.Module):
     """A tensor field network layer as a DGL module.
@@ -124,7 +179,7 @@ class ConvSE3(nn.Module):
             output = 0
             degree_out_key = str(degree_out)
 
-            for degree_in, m_in in self.fiber_in.structure:
+            for degree_in, m_in in self.fiber_in:
                 x = inp[str(degree_in)]
                 x = batched_index_select(x, neighbor_indices)
                 x = x.view(*x.shape[:3], (2 * degree_in + 1) * m_in, 1)
@@ -240,7 +295,7 @@ class SE3Transformer(nn.Module):
         heads = 8,
         dim_head = 64,
         depth = 6,
-        num_degrees = 4,
+        num_degrees = 2,
         input_degrees = 1,
         output_degrees = 2
     ):
@@ -256,6 +311,7 @@ class SE3Transformer(nn.Module):
         fiber_out    = Fiber.create(output_degrees, dim)
 
         self.conv_in  = ConvSE3(fiber_in, fiber_hidden)
+        self.norm     = NormSE3(fiber_hidden)
         self.conv_out = ConvSE3(fiber_hidden, fiber_out)
 
     def forward(self, feats, coors, mask = None, return_type = None):
@@ -289,6 +345,7 @@ class SE3Transformer(nn.Module):
         x = feats
 
         x = self.conv_in(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
+        x = self.norm(x)
         x = self.conv_out(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
 
         if exists(return_type):

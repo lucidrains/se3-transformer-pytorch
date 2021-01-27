@@ -276,7 +276,7 @@ class ConvSE3(nn.Module):
 
                 etype = f'({degree_in},{degree_out})'
                 kernel = kernels[etype]
-                output = output + torch.matmul(kernel, x)
+                output = output + einsum('... o i, ... i c -> ... o c', kernel, x)
 
             output = masked_mean(output, neighbor_masks, dim = 2)
             output = output.view(*x.shape[:2], -1, 2 * degree_out + 1)

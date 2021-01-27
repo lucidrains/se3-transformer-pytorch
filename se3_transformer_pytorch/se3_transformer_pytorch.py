@@ -197,12 +197,13 @@ class AttentionBlockSE3(nn.Module):
 
 class ResidualSE3(nn.Module):
     """ only support instance where both Fibers are identical """
-    def forward(self, x, y):
-        assert set(x.keys()) == set(y.keys()), 'fibers must have the same set of degrees'
+    def forward(self, x, res):
         out = {}
         for degree, tensor in x.items():
             degree = str(degree)
-            out[degree] = tensor + y[degree]
+            out[degree] = tensor
+            if degree in res:
+                out[degree] = out[degree] + res[degree]
         return out
 
 class NormSE3(nn.Module):

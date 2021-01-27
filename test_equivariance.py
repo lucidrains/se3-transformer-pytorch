@@ -4,7 +4,7 @@ from se3_transformer_pytorch.se3_transformer_pytorch import SE3Transformer
 def test_transformer():
     model = SE3Transformer(
         dim = 64,
-        num_degrees = 4
+        num_degrees = 2
     )
 
     feats = torch.randn(1, 32, 64)

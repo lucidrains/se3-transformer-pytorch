@@ -139,9 +139,15 @@ class AttentionSE3(nn.Module):
     ):
         super().__init__()
         hidden_dim = dim_head * heads
+        hidden_fiber = Fiber(list(map(lambda t: (t[0], hidden_dim), fiber)))
 
-    def forward(self, features):
-        return features
+        self.to_q = LinearSE3(fiber, hidden_fiber)
+        self.to_out = LinearSE3(hidden_fiber, fiber)
+
+    def forward(self, features, edge_info, rel_dist, basis):
+        queries = self.to_q(features)
+        outputs = self.to_out(queries)
+        return outputs
 
 class AttentionBlockSE3(nn.Module):
     def __init__(
@@ -156,10 +162,10 @@ class AttentionBlockSE3(nn.Module):
         self.prenorm = NormSE3(fiber)
         self.residual = ResidualSE3()
 
-    def forward(self, features):
+    def forward(self, features, edge_info, rel_dist, basis):
         res = features
         outputs = self.prenorm(features)
-        outputs = self.attn(outputs)
+        outputs = self.attn(outputs, edge_info, rel_dist, basis)
         return self.residual(outputs, res)
 
 class ResidualSE3(nn.Module):
@@ -433,8 +439,8 @@ class SE3Transformer(nn.Module):
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                FeedForwardBlockSE3(fiber_hidden),
-                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head)
+                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head),
+                FeedForwardBlockSE3(fiber_hidden)
             ]))
 
         self.conv_out = ConvSE3(fiber_hidden, fiber_out)
@@ -472,7 +478,7 @@ class SE3Transformer(nn.Module):
         x = self.conv_in(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
 
         for (attn, ff) in self.layers:
-            x = attn(x)
+            x = attn(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
             x = ff(x)
 
         x = self.conv_out(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)

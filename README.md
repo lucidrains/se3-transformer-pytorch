@@ -35,6 +35,10 @@ out = model(feats, coors, mask) # (1, 1024, 512)
 $ python setup.py pytest
 ```
 
+## Credit
+
+This library is largely a port of <a href="https://github.com/FabianFuchsML/se3-transformer-public">Fabian's official repository</a>, but without the DGL library.
+
 ## Citations
 
 ```bibtex

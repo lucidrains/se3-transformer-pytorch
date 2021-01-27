@@ -1,3 +1,4 @@
+import copy
 from math import sqrt
 
 import torch
@@ -46,6 +47,16 @@ class Fiber(nn.Module):
     def create(num_degrees, dim):
         return Fiber([FiberEl(degree, dim) for degree in range(num_degrees)])
 
+    @staticmethod
+    def combine_max(fiber_x, fiber_y):
+        structure = copy.deepcopy(fiber_x.structure)
+        degrees_out = set(fiber_y.structure)
+        structure = list(map(lambda t: (t if t[0] not in degrees_out else max(t[1], fiber_y[t[0]])), structure))
+        return Fiber(structure)
+
+    def __getitem__(self, degree):
+        return dict(self.structure)[degree]
+
     def __iter__(self):
         return iter(self.structure)
 
@@ -53,6 +64,85 @@ class Fiber(nn.Module):
         return product(self.structure, fiber.structure)
 
 # classes
+
+class FeedForwardBlockSE3(nn.Module):
+    def __init__(
+        self,
+        fiber_in,
+    ):
+        super().__init__()
+        self.fiber_in = fiber_in
+        self.prenorm = NormSE3(fiber_in)
+        self.feedforward = FeedForwardSE3(fiber_in)
+        self.residual = ResidualSE3(fiber_in)
+
+    def forward(self, features):
+        res = features
+        out = self.prenorm(features)
+        out = self.feedforward(out)
+        return self.residual(out, res)
+
+class FeedForwardSE3(nn.Module):
+    def __init__(
+        self,
+        fiber_in,
+        mult = 4
+    ):
+        super().__init__()
+        self.fiber = fiber_in
+
+        self.transforms_in = nn.ParameterDict()
+        self.transforms_out = nn.ParameterDict()
+
+        for degree, dim in fiber_in:
+            key = str(degree)
+            self.transforms_in[key]  = nn.Parameter(torch.randn(dim, dim * mult)) 
+            self.transforms_out[key] = nn.Parameter(torch.randn(dim * mult, dim)) 
+
+        norm_fiber = Fiber(list(map(lambda t: (t[0], t[1] * mult), fiber_in)))
+        self.nonlin = NormSE3(norm_fiber)
+
+    def forward(self, features):
+        outputs = {}
+        for degree, t in features.items():
+            w1 = self.transforms_in[degree]
+            t = einsum('b n d m, d e -> b n e m', t, w1)
+            outputs[degree] = t
+
+        outputs = self.nonlin(outputs)
+
+        for degree, t in outputs.items():
+            w2 = self.transforms_out[degree]
+            t = einsum('b n d m, d e -> b n e m', t, w2)
+            outputs[degree] = t
+
+        return outputs
+
+class ResidualSE3(nn.Module):
+    """SE(3)-equvariant graph residual sum function."""
+    def __init__(
+        self,
+        fiber_x,
+        fiber_y = None
+    ):
+        """SE(3)-equvariant graph residual sum function.
+
+        Args:
+            f_x: Fiber() object for fiber of summands
+            f_y: Fiber() object for fiber of summands
+        """
+        super().__init__()
+        if exists(fiber_y):
+            self.fiber_out = Fiber.combine_max(fiber_x, fiber_y)
+        else:
+            self.fiber_out = fiber_x
+
+    def forward(self, x, y):
+        out = {}
+        for degree in self.fiber_out.degrees:
+            degree = str(degree)
+            out[degree] = x[degree] + y[degree]
+        return out
 
 class NormSE3(nn.Module):
     """Norm-based SE(3)-equivariant nonlinearity.
@@ -70,7 +160,7 @@ class NormSE3(nn.Module):
     def __init__(
         self,
         fiber,
-        nonlin = nn.ReLU(inplace=True),
+        nonlin = nn.GELU(),
         eps = 1e-12
     ):
         """Initializer.
@@ -150,8 +240,8 @@ class ConvSE3(nn.Module):
             structure = filter(lambda t: t[0] in self.fiber_out.degrees, self.fiber_in.structure)
 
             for d_in, m_in in structure:
-                m_out = dict(self.fiber_out.structure)[d_in]
-                weight = nn.Parameter(torch.randn(1, m_out, m_in) / sqrt(m_in))
+                m_out = self.fiber_out[d_in]
+                weight = nn.Parameter(torch.randn(m_in, m_out) / sqrt(m_in))
                 self.kernel_self[f'{d_in}'] = weight
 
     def forward(self, inp, edge_info, rel_dist = None, basis = None):
@@ -194,7 +284,7 @@ class ConvSE3(nn.Module):
             if self.self_interaction and degree_out_key in self.kernel_self.keys():
                 x = inp[degree_out_key]
                 kernel = self.kernel_self[degree_out_key]
-                output = output + torch.matmul(kernel, x)
+                output = output + einsum('i o , b n i m -> b n o m', kernel, x)
 
             outputs[degree_out_key] = output
 
@@ -311,7 +401,13 @@ class SE3Transformer(nn.Module):
         fiber_out    = Fiber.create(output_degrees, dim)
 
         self.conv_in  = ConvSE3(fiber_in, fiber_hidden)
-        self.norm     = NormSE3(fiber_hidden)
+
+        self.layers = nn.ModuleList([])
+        for _ in range(depth):
+            self.layers.append(nn.ModuleList([
+                FeedForwardBlockSE3(fiber_hidden)
+            ]))
+
         self.conv_out = ConvSE3(fiber_hidden, fiber_out)
 
     def forward(self, feats, coors, mask = None, return_type = None):
@@ -345,7 +441,10 @@ class SE3Transformer(nn.Module):
         x = feats
 
         x = self.conv_in(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
-        x = self.norm(x)
+
+        for (ff,) in self.layers:
+            x = ff(x)
+
         x = self.conv_out(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
 
         if exists(return_type):

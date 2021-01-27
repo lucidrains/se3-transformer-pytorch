@@ -268,15 +268,10 @@ class ConvSE3(nn.Module):
             self.kernel_unary[f'({di},{do})'] = PairwiseConv(di, mi, do, mo)
 
         # Center -> center weights
-        self.kernel_self = nn.ParameterDict()
 
         if self_interaction:
-            structure = filter(lambda t: t[0] in self.fiber_out.degrees, self.fiber_in.structure)
-
-            for d_in, m_in in structure:
-                m_out = self.fiber_out[d_in]
-                weight = nn.Parameter(torch.randn(m_in, m_out) / sqrt(m_in))
-                self.kernel_self[f'{d_in}'] = weight
+            self.self_interact = LinearSE3(fiber_in, fiber_out)
+            self.self_interact_sum = ResidualSE3()
 
     def forward(self, inp, edge_info, rel_dist = None, basis = None):
         """Forward pass of the linear layer
@@ -315,12 +310,11 @@ class ConvSE3(nn.Module):
             output = masked_mean(output, neighbor_masks, dim = 2)
             output = output.view(*x.shape[:2], -1, 2 * degree_out + 1)
 
-            if self.self_interaction and degree_out_key in self.kernel_self.keys():
-                x = inp[degree_out_key]
-                kernel = self.kernel_self[degree_out_key]
-                output = output + einsum('i o , b n i m -> b n o m', kernel, x)
-
             outputs[degree_out_key] = output
+
+        if self.self_interaction:
+            self_interact_out = self.self_interact(inp)
+            outputs = self.self_interact_sum(outputs, self_interact_out)
 
         return outputs
 

@@ -63,18 +63,66 @@ class Fiber(nn.Module):
     def __mul__(self, fiber):
         return product(self.structure, fiber.structure)
 
+    def __and__(self, fiber):
+        out = []
+        degrees_out = fiber.degrees
+        for degree, dim in self:
+            if degree in fiber.degrees:
+                dim_out = fiber[degree]
+                out.append((degree, dim, dim_out))
+        return out
+
 # classes
+
+class LinearSE3(nn.Module):
+    def __init__(
+        self,
+        fiber_in,
+        fiber_out
+    ):
+        super().__init__()
+        self.weights = nn.ParameterDict()
+
+        for (degree, dim_in, dim_out) in (fiber_in & fiber_out):
+            key = str(degree)
+            self.weights[key]  = nn.Parameter(torch.randn(dim_in, dim_out) / sqrt(dim_in))
+
+    def forward(self, x):
+        out = {}
+        for degree, weight in self.weights.items():
+            out[degree] = einsum('b n d m, d e -> b n e m', x[degree], weight)
+        return out
+
+class FeedForwardSE3(nn.Module):
+    def __init__(
+        self,
+        fiber,
+        mult = 4
+    ):
+        super().__init__()
+        self.fiber = fiber
+        fiber_hidden = Fiber(list(map(lambda t: (t[0], t[1] * mult), fiber)))
+
+        self.project_in  = LinearSE3(fiber, fiber_hidden)
+        self.nonlin      = NormSE3(fiber_hidden)
+        self.project_out = LinearSE3(fiber_hidden, fiber)
+
+    def forward(self, features):
+        outputs = self.project_in(features)
+        outputs = self.nonlin(outputs)
+        outputs = self.project_out(outputs)
+        return outputs
 
 class FeedForwardBlockSE3(nn.Module):
     def __init__(
         self,
-        fiber_in,
+        fiber,
     ):
         super().__init__()
-        self.fiber_in = fiber_in
-        self.prenorm = NormSE3(fiber_in)
-        self.feedforward = FeedForwardSE3(fiber_in)
-        self.residual = ResidualSE3(fiber_in)
+        self.fiber = fiber
+        self.prenorm = NormSE3(fiber)
+        self.feedforward = FeedForwardSE3(fiber)
+        self.residual = ResidualSE3()
 
     def forward(self, features):
         res = features
@@ -82,66 +130,46 @@ class FeedForwardBlockSE3(nn.Module):
         out = self.feedforward(out)
         return self.residual(out, res)
 
-class FeedForwardSE3(nn.Module):
+class AttentionSE3(nn.Module):
     def __init__(
         self,
-        fiber_in,
-        mult = 4
+        fiber,
+        dim_head = 64,
+        heads = 8
     ):
         super().__init__()
-        self.fiber = fiber_in
-
-        self.transforms_in = nn.ParameterDict()
-        self.transforms_out = nn.ParameterDict()
-
-        for degree, dim in fiber_in:
-            key = str(degree)
-            self.transforms_in[key]  = nn.Parameter(torch.randn(dim, dim * mult)) 
-            self.transforms_out[key] = nn.Parameter(torch.randn(dim * mult, dim)) 
-
-        norm_fiber = Fiber(list(map(lambda t: (t[0], t[1] * mult), fiber_in)))
-        self.nonlin = NormSE3(norm_fiber)
+        hidden_dim = dim_head * heads
 
     def forward(self, features):
-        outputs = {}
-        for degree, t in features.items():
-            w1 = self.transforms_in[degree]
-            t = einsum('b n d m, d e -> b n e m', t, w1)
-            outputs[degree] = t
+        return features
 
-        outputs = self.nonlin(outputs)
-
-        for degree, t in outputs.items():
-            w2 = self.transforms_out[degree]
-            t = einsum('b n d m, d e -> b n e m', t, w2)
-            outputs[degree] = t
-
-        return outputs
-
-class ResidualSE3(nn.Module):
-    """SE(3)-equvariant graph residual sum function."""
+class AttentionBlockSE3(nn.Module):
     def __init__(
         self,
-        fiber_x,
-        fiber_y = None
+        fiber,
+        dim_head = 64,
+        heads = 8,
+
     ):
-        """SE(3)-equvariant graph residual sum function.
-
-        Args:
-            f_x: Fiber() object for fiber of summands
-            f_y: Fiber() object for fiber of summands
-        """
         super().__init__()
-        if exists(fiber_y):
-            self.fiber_out = Fiber.combine_max(fiber_x, fiber_y)
-        else:
-            self.fiber_out = fiber_x
+        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head)
+        self.prenorm = NormSE3(fiber)
+        self.residual = ResidualSE3()
 
+    def forward(self, features):
+        res = features
+        outputs = self.prenorm(features)
+        outputs = self.attn(outputs)
+        return self.residual(outputs, res)
+
+class ResidualSE3(nn.Module):
+    """ only support instance where both Fibers are identical """
     def forward(self, x, y):
+        assert set(x.keys()) == set(y.keys()), 'fibers must have the same set of degrees'
         out = {}
-        for degree in self.fiber_out.degrees:
+        for degree, tensor in x.items():
             degree = str(degree)
-            out[degree] = x[degree] + y[degree]
+            out[degree] = tensor + y[degree]
         return out
 
 class NormSE3(nn.Module):
@@ -405,7 +433,8 @@ class SE3Transformer(nn.Module):
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                FeedForwardBlockSE3(fiber_hidden)
+                FeedForwardBlockSE3(fiber_hidden),
+                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head)
             ]))
 
         self.conv_out = ConvSE3(fiber_hidden, fiber_out)
@@ -442,7 +471,8 @@ class SE3Transformer(nn.Module):
 
         x = self.conv_in(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
 
-        for (ff,) in self.layers:
+        for (attn, ff) in self.layers:
+            x = attn(x)
             x = ff(x)
 
         x = self.conv_out(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)

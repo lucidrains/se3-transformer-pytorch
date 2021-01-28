@@ -73,46 +73,43 @@ def cache_dir(dirname, maxsize=128):
         @lru_cache(maxsize=maxsize)
         @wraps(func)
         def wrapper(*args, **kwargs):
-            try:
-                os.makedirs(dirname)
-            except FileExistsError:
-                pass
+            os.makedirs(dirname, exist_ok = True)
 
             indexfile = os.path.join(dirname, "index.pkl")
             lock = FileLock(os.path.join(dirname, "mutex"))
 
             with lock:
-                try:
+                index = {}
+                if os.path.exists(indexfile):
                     with open(indexfile, "rb") as file:
                         index = pickle.load(file)
-                except FileNotFoundError:
-                    index = {}
 
                 key = (args, frozenset(kwargs), func.__defaults__)
 
-                try:
+                if key in index:
                     filename = index[key]
-                except KeyError:
+                else:
                     index[key] = filename = f"{len(index)}.pkl.gz"
                     with open(indexfile, "wb") as file:
                         pickle.dump(index, file)
 
             filepath = os.path.join(dirname, filename)
 
-            try:
+            if os.path.exists(filepath):
                 with lock:
                     with gzip.open(filepath, "rb") as file:
                         result = pickle.load(file)
-            except FileNotFoundError:
-                print(f"compute {filename}... ", end="", flush = True)
-                result = func(*args, **kwargs)
-                print(f"save {filename}... ", end="", flush = True)
+                return result
 
-                with lock:
-                    with gzip.open(filepath, "wb") as file:
-                        pickle.dump(result, file)
+            print(f"compute {filename}... ", end="", flush = True)
+            result = func(*args, **kwargs)
+            print(f"save {filename}... ", end="", flush = True)
 
-                print("done")
+            with lock:
+                with gzip.open(filepath, "wb") as file:
+                    pickle.dump(result, file)
+
+            print("done")
 
             return result
         return wrapper

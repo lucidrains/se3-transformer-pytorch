@@ -478,6 +478,7 @@ class SE3Transformer(nn.Module):
         self.dim = dim
         self.attend_self = attend_self
 
+        self.input_degrees = input_degrees
         self.num_degrees = num_degrees
         self.num_neighbors = num_neighbors
 
@@ -501,7 +502,9 @@ class SE3Transformer(nn.Module):
             feats = {'0': feats[..., None]}
 
         b, n, d, *_, device = *feats['0'].shape, feats['0'].device
+
         assert d == self.dim, f'feature dimension {d} must be equal to dimension given at init {self.dim}'
+        assert set(map(int, feats.keys())) == set(range(self.input_degrees)), f'input must have {self.input_degrees} degree'
 
         num_degrees, neighbors = self.num_degrees, self.num_neighbors
 

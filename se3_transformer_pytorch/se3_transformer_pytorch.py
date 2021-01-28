@@ -12,6 +12,10 @@ from einops import rearrange, repeat
 from se3_transformer_pytorch.basis import get_basis
 from se3_transformer_pytorch.utils import exists, default
 
+# constants
+
+TOKEN_SELF_ATTN_VALUE = -5e4 # carefully set for half precision to work
+
 # helpers
 
 def batched_index_select(values, indices):
@@ -71,6 +75,10 @@ class Fiber(nn.Module):
                 dim_out = fiber[degree]
                 out.append((degree, dim, dim_out))
         return out
+
+def get_tensor_device_and_dtype(features):
+    first_tensor = next(iter(features.items()))[1]
+    return first_tensor.device, first_tensor.dtype
 
 # classes
 
@@ -135,13 +143,15 @@ class AttentionSE3(nn.Module):
         self,
         fiber,
         dim_head = 64,
-        heads = 8
+        heads = 8,
+        attend_self = True
     ):
         super().__init__()
         hidden_dim = dim_head * heads
         hidden_fiber = Fiber(list(map(lambda t: (t[0], hidden_dim), fiber)))
         self.scale = dim_head ** -0.5
         self.heads = heads
+        self.attend_self = attend_self
 
         self.to_q = LinearSE3(fiber, hidden_fiber)
         self.to_k = ConvSE3(fiber, hidden_fiber, pool = False, self_interaction = False)
@@ -150,10 +160,12 @@ class AttentionSE3(nn.Module):
 
     def forward(self, features, edge_info, rel_dist, basis):
         h = self.heads
+        device, dtype = get_tensor_device_and_dtype(features)
         neighbor_indices, neighbor_masks = edge_info
 
-        mask_value = -torch.finfo(next(iter(features.items()))[1].dtype).max
+        max_neg_value = -torch.finfo().max
         neighbor_masks = rearrange(neighbor_masks, 'b i j -> b () i j')
+        neighbor_indices = rearrange(neighbor_indices, 'b i j -> b () i j')
 
         queries = self.to_q(features)
         keys, values = self.to_k(features, edge_info, rel_dist, basis), self.to_v(features, edge_info, rel_dist, basis)
@@ -167,7 +179,15 @@ class AttentionSE3(nn.Module):
 
             sim = einsum('b h i d m, b h i j d m -> b h i j', q, k) * self.scale
 
-            sim.masked_fill_(~neighbor_masks, mask_value)
+            i, j = sim.shape[2:]
+            sim.masked_fill_(~neighbor_masks, max_neg_value)
+
+            seq = torch.arange(i, device = device)
+            seq = rearrange(seq, 'i -> () () i ()')
+
+            self_mask = (neighbor_indices == seq)
+            self_mask_value = TOKEN_SELF_ATTN_VALUE if self.attend_self else max_neg_value
+            sim.masked_fill_(self_mask, self_mask_value)
 
             attn = sim.softmax(dim = -1)
             out = einsum('b h i j, b h i j d m -> b h i d m', attn, v)
@@ -182,10 +202,10 @@ class AttentionBlockSE3(nn.Module):
         fiber,
         dim_head = 64,
         heads = 8,
-
+        attend_self = True
     ):
         super().__init__()
-        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head)
+        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self)
         self.prenorm = NormSE3(fiber)
         self.residual = ResidualSE3()
 
@@ -448,6 +468,7 @@ class SE3Transformer(nn.Module):
         heads = 8,
         dim_head = 64,
         depth = 2,
+        attend_self = True,
         num_degrees = 2,
         input_degrees = 1,
         output_degrees = 2
@@ -455,6 +476,7 @@ class SE3Transformer(nn.Module):
         super().__init__()
         assert num_neighbors > 0, 'neighbors must be at least 1'
         self.dim = dim
+        self.attend_self = attend_self
 
         self.num_degrees = num_degrees
         self.num_neighbors = num_neighbors
@@ -468,7 +490,7 @@ class SE3Transformer(nn.Module):
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head),
+                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self),
                 FeedForwardBlockSE3(fiber_hidden)
             ]))
 
@@ -489,10 +511,13 @@ class SE3Transformer(nn.Module):
         # get neighbors and neighbor mask, excluding self
         
         mask_value = torch.finfo(rel_dist.dtype).max
-        self_mask = torch.eye(n, device = device).bool()
-        masked_rel_dist = rel_dist.masked_fill_(self_mask, mask_value)
-        neighbor_rel_dist, neighbor_indices = masked_rel_dist.topk(neighbors, dim = -1, largest = False)
 
+        masked_rel_dist = rel_dist
+        if not self.attend_self:
+            self_mask = torch.eye(n, device = device).bool()
+            masked_rel_dist = rel_dist.masked_fill_(self_mask, mask_value)
+
+        neighbor_rel_dist, neighbor_indices = masked_rel_dist.topk(neighbors, dim = -1, largest = False)
         neighbor_rel_pos = rel_pos.gather(2, neighbor_indices[..., None].expand(-1, -1, -1, 3))
         basis = get_basis(neighbor_rel_pos, num_degrees - 1)
 

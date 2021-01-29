@@ -18,10 +18,21 @@ TOKEN_SELF_ATTN_VALUE = -5e4 # carefully set for half precision to work
 
 # helpers
 
-def batched_index_select(values, indices):
-    b, n, d, m, j = *values.shape, indices.shape[2]
-    values = values[:, :, None, :, :].expand(-1, -1, j, -1, -1)
-    return values.gather(1, indices[:, :, :, None, None].expand(-1, -1, -1, d, m))
+def batched_index_select(values, indices, dim = 1):
+    value_dims = values.shape[(dim + 1):]
+    values_shape, indices_shape = map(lambda t: list(t.shape), (values, indices))
+    indices = indices[(..., *((None,) * len(value_dims)))]
+    indices = indices.expand(*((-1,) * len(indices_shape)), *value_dims)
+    value_expand_len = len(indices_shape) - (dim + 1)
+    values = values[(*((slice(None),) * dim), *((None,) * value_expand_len), ...)]
+
+    value_expand_shape = [-1] * len(values.shape)
+    expand_slice = slice(dim, (dim + value_expand_len))
+    value_expand_shape[expand_slice] = indices.shape[expand_slice]
+    values = values.expand(*value_expand_shape)
+
+    dim += value_expand_len
+    return values.gather(dim, indices)
 
 def masked_mean(tensor, mask, dim = -1):
     diff_len = len(tensor.shape) - len(mask.shape)
@@ -352,7 +363,7 @@ class ConvSE3(nn.Module):
 
             for degree_in, m_in in self.fiber_in:
                 x = inp[str(degree_in)]
-                x = batched_index_select(x, neighbor_indices)
+                x = batched_index_select(x, neighbor_indices, dim = 1)
                 x = x.view(*x.shape[:3], (2 * degree_in + 1) * m_in, 1)
 
                 etype = f'({degree_in},{degree_out})'
@@ -521,12 +532,12 @@ class SE3Transformer(nn.Module):
             masked_rel_dist = rel_dist.masked_fill_(self_mask, mask_value)
 
         neighbor_rel_dist, neighbor_indices = masked_rel_dist.topk(neighbors, dim = -1, largest = False)
-        neighbor_rel_pos = rel_pos.gather(2, neighbor_indices[..., None].expand(-1, -1, -1, 3))
+        neighbor_rel_pos = batched_index_select(rel_pos, neighbor_indices, dim = 2)
         basis = get_basis(neighbor_rel_pos, num_degrees - 1)
 
         neighbor_mask = None
         if exists(mask):
-            neighbor_mask = mask[:, :, None].expand(-1, -1, neighbors).gather(1, neighbor_indices)
+            neighbor_mask = batched_index_select(mask, neighbor_indices, dim = 1)
 
         # main logic
         edge_info = (neighbor_indices, neighbor_mask)

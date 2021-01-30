@@ -5,9 +5,9 @@ from torch import einsum
 from einops import rearrange
 from itertools import product
 
-from se3_transformer_pytorch.irr_repr import irr_repr
+from se3_transformer_pytorch.irr_repr import irr_repr, spherical_harmonics
 from se3_transformer_pytorch.utils import torch_default_dtype, cache_dir
-from se3_transformer_pytorch.spherical_harmonics import get_spherical_harmonics, clear_spherical_harmonics_cache
+from se3_transformer_pytorch.spherical_harmonics import clear_spherical_harmonics_cache
 
 # constants
 
@@ -46,7 +46,7 @@ def get_matrices_kernel(As, eps = 1e-10):
     matrix = torch.cat(As, dim=0)
     return get_matrix_kernel(matrix, eps)
 
-def get_spherical_from_cartesian_torch(cartesian, divide_radius_by = 1.0):
+def get_spherical_from_cartesian(cartesian, divide_radius_by = 1.0):
     """
     # ON ANGLE CONVENTION
     #
@@ -137,7 +137,7 @@ def precompute_sh(r_ij, max_J):
     :return: dict where each entry has shape [B,N,K,2J+1]
     """
     i_alpha, i_beta = 1, 2
-    Y_Js = {J: get_spherical_harmonics(J, pi - r_ij[...,i_beta], r_ij[...,i_alpha]) for J in range(max_J + 1)}
+    Y_Js = {J: spherical_harmonics(J, r_ij[...,i_alpha], r_ij[...,i_beta]) for J in range(max_J + 1)}
     clear_spherical_harmonics_cache()
     return Y_Js
 
@@ -161,7 +161,7 @@ def get_basis(r_ij, max_degree):
     # Relative positional encodings (vector)
     device = r_ij.device
 
-    r_ij = get_spherical_from_cartesian_torch(r_ij)
+    r_ij = get_spherical_from_cartesian(r_ij)
 
     # Spherical harmonic basis
     Y = precompute_sh(r_ij, 2 * max_degree)

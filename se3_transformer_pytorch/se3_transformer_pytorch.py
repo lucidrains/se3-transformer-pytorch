@@ -438,11 +438,13 @@ class SE3Transformer(nn.Module):
         attend_self = False,
         num_degrees = 2,
         input_degrees = 1,
-        output_degrees = 2
+        output_degrees = 2,
+        valid_radius = 1e5
     ):
         super().__init__()
         assert num_neighbors > 0, 'neighbors must be at least 1'
         self.dim = dim
+        self.valid_radius = valid_radius
 
         self.input_degrees = input_degrees
         self.num_degrees = num_degrees
@@ -498,9 +500,10 @@ class SE3Transformer(nn.Module):
 
         basis = get_basis(neighbor_rel_pos, num_degrees - 1)
 
-        neighbor_mask = None
+        neighbor_mask = neighbor_rel_dist <= self.valid_radius
+
         if exists(mask):
-            neighbor_mask = batched_index_select(mask, nearest_indices, dim = 2)
+            neighbor_mask = neighbor_mask & batched_index_select(mask, nearest_indices, dim = 2)
 
         # main logic
 

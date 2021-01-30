@@ -533,6 +533,7 @@ class SE3Transformer(nn.Module):
 
         neighbor_rel_dist, neighbor_indices = masked_rel_dist.topk(neighbors, dim = -1, largest = False)
         neighbor_rel_pos = batched_index_select(rel_pos, neighbor_indices, dim = 2)
+
         basis = get_basis(neighbor_rel_pos, num_degrees - 1)
 
         neighbor_mask = None

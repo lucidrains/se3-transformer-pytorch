@@ -5,7 +5,7 @@ from torch import einsum
 from einops import rearrange
 from itertools import product
 
-from se3_transformer_pytorch.irr_repr import irr_repr, spherical_harmonics
+from se3_transformer_pytorch.irr_repr import irr_repr
 from se3_transformer_pytorch.utils import torch_default_dtype, cache_dir
 from se3_transformer_pytorch.spherical_harmonics import get_spherical_harmonics, clear_spherical_harmonics_cache
 
@@ -137,7 +137,7 @@ def precompute_sh(r_ij, max_J):
     :return: dict where each entry has shape [B,N,K,2J+1]
     """
     i_alpha, i_beta = 1, 2
-    Y_Js = {J: spherical_harmonics(J, pi - r_ij[...,i_beta], r_ij[...,i_alpha]) for J in range(max_J + 1)}
+    Y_Js = {J: get_spherical_harmonics(J, pi - r_ij[...,i_beta], r_ij[...,i_alpha]) for J in range(max_J + 1)}
     clear_spherical_harmonics_cache()
     return Y_Js
 

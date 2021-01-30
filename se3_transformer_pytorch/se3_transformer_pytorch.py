@@ -175,7 +175,10 @@ class AttentionSE3(nn.Module):
         neighbor_indices, neighbor_masks = edge_info
 
         max_neg_value = -torch.finfo().max
-        neighbor_masks = rearrange(neighbor_masks, 'b i j -> b () i j')
+
+        if exists(neighbor_masks):
+            neighbor_masks = rearrange(neighbor_masks, 'b i j -> b () i j')
+
         neighbor_indices = rearrange(neighbor_indices, 'b i j -> b () i j')
 
         queries = self.to_q(features)
@@ -191,7 +194,9 @@ class AttentionSE3(nn.Module):
             sim = einsum('b h i d m, b h i j d m -> b h i j', q, k) * self.scale
 
             i, j = sim.shape[2:]
-            sim.masked_fill_(~neighbor_masks, max_neg_value)
+
+            if exists(neighbor_masks):
+                sim.masked_fill_(~neighbor_masks, max_neg_value)
 
             seq = torch.arange(i, device = device)
             seq = rearrange(seq, 'i -> () () i ()')
@@ -371,7 +376,7 @@ class ConvSE3(nn.Module):
                 output = output + einsum('... o i, ... i c -> ... o c', kernel, x)
 
             if self.pool:
-                output = masked_mean(output, neighbor_masks, dim = 2)
+                output = masked_mean(output, neighbor_masks, dim = 2) if exists(neighbor_masks) else output.mean(dim = 2)
 
             leading_shape = x.shape[:2] if self.pool else x.shape[:3]
             output = output.view(*leading_shape, -1, 2 * degree_out + 1)
@@ -466,7 +471,8 @@ class PairwiseConv(nn.Module):
     def forward(self, feat, basis):
         R = self.rp(feat)
         kernel = torch.sum(R * basis[f'{self.degree_in},{self.degree_out}'], dim = -1)
-        return kernel.view(*kernel.shape[:3], self.d_out * self.nc_out, -1)
+        out =  kernel.view(*kernel.shape[:3], self.d_out * self.nc_out, -1)
+        return out
 
 # main class
 

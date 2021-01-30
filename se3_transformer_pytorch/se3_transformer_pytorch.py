@@ -1,6 +1,6 @@
 from math import sqrt
 from itertools import product
-from collections import namedtuple, defaultdict
+from collections import namedtuple
 
 import torch
 import torch.nn.functional as F

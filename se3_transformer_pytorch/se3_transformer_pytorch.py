@@ -1,19 +1,15 @@
 from math import sqrt
+from itertools import product
+from collections import namedtuple, defaultdict
 
 import torch
 import torch.nn.functional as F
 from torch import nn, einsum
 
-from itertools import product
-from collections import namedtuple, defaultdict
-
-from einops import rearrange, repeat
 from se3_transformer_pytorch.basis import get_basis
 from se3_transformer_pytorch.utils import exists, default
 
-# constants
-
-TOKEN_SELF_ATTN_VALUE = -5e4 # carefully set for half precision to work
+from einops import rearrange, repeat
 
 # helpers
 

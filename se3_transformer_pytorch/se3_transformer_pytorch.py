@@ -1,4 +1,3 @@
-import copy
 from math import sqrt
 
 import torch
@@ -61,13 +60,6 @@ class Fiber(nn.Module):
     @staticmethod
     def create(num_degrees, dim):
         return Fiber([FiberEl(degree, dim) for degree in range(num_degrees)])
-
-    @staticmethod
-    def combine_max(fiber_x, fiber_y):
-        structure = copy.deepcopy(fiber_x.structure)
-        degrees_out = set(fiber_y.structure)
-        structure = list(map(lambda t: (t if t[0] not in degrees_out else max(t[1], fiber_y[t[0]])), structure))
-        return Fiber(structure)
 
     def __getitem__(self, degree):
         return dict(self.structure)[degree]

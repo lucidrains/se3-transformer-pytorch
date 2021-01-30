@@ -156,6 +156,15 @@ class AttentionSE3(nn.Module):
         self.to_v = ConvSE3(fiber, hidden_fiber, pool = False, self_interaction = False)
         self.to_out = LinearSE3(hidden_fiber, fiber)
 
+        self.null_keys = nn.ParameterDict()
+        self.null_values = nn.ParameterDict()
+
+        for degree in fiber.degrees:
+            m = 2 * degree + 1
+            degree_key = str(degree)
+            self.null_keys[degree_key] = nn.Parameter(torch.zeros(heads, dim_head, m))
+            self.null_values[degree_key] = nn.Parameter(torch.zeros(heads, dim_head, m))
+
         self.attend_self = attend_self
         if attend_self:
             self.to_self_k = LinearSE3(fiber, hidden_fiber)
@@ -181,10 +190,14 @@ class AttentionSE3(nn.Module):
 
         outputs = {}
         for degree in features.keys():
-            q, k, v = map(lambda t: t[degree], (queries, keys, values))
+            q, k, v, null_k, null_v = map(lambda t: t[degree], (queries, keys, values, self.null_keys, self.null_values))
 
             q = rearrange(q, 'b i (h d) m -> b h i d m', h = h)
             k, v = map(lambda t: rearrange(t, 'b i j (h d) m -> b h i j d m', h = h), (k, v))
+
+            null_k, null_v = map(lambda t: repeat(t, 'h d m -> b h i () d m', b = q.shape[0], i = q.shape[2]), (null_k, null_v))
+            k = torch.cat((null_k, k), dim = 3)
+            v = torch.cat((null_v, v), dim = 3)
 
             if attend_self:
                 self_k, self_v = map(lambda t: t[degree], (self_keys, self_values))
@@ -197,9 +210,8 @@ class AttentionSE3(nn.Module):
             i, j = sim.shape[2:]
 
             if exists(neighbor_mask):
-                mask = neighbor_mask
-                if attend_self:
-                    mask = F.pad(mask, (1, 0), value = True)
+                num_left_pad = 2 if attend_self else 1
+                mask = F.pad(neighbor_mask, (num_left_pad, 0), value = True)
                 sim.masked_fill_(~mask, max_neg_value)
 
             seq = torch.arange(i, device = device)

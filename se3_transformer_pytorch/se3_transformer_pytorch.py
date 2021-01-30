@@ -57,6 +57,17 @@ def get_tensor_device_and_dtype(features):
 
 # classes
 
+class ResidualSE3(nn.Module):
+    """ only support instance where both Fibers are identical """
+    def forward(self, x, res):
+        out = {}
+        for degree, tensor in x.items():
+            degree = str(degree)
+            out[degree] = tensor
+            if degree in res:
+                out[degree] = out[degree] + res[degree]
+        return out
+
 class LinearSE3(nn.Module):
     def __init__(
         self,
@@ -74,154 +85,6 @@ class LinearSE3(nn.Module):
         out = {}
         for degree, weight in self.weights.items():
             out[degree] = einsum('b n d m, d e -> b n e m', x[degree], weight)
-        return out
-
-class FeedForwardSE3(nn.Module):
-    def __init__(
-        self,
-        fiber,
-        mult = 4
-    ):
-        super().__init__()
-        self.fiber = fiber
-        fiber_hidden = Fiber(list(map(lambda t: (t[0], t[1] * mult), fiber)))
-
-        self.project_in  = LinearSE3(fiber, fiber_hidden)
-        self.nonlin      = NormSE3(fiber_hidden)
-        self.project_out = LinearSE3(fiber_hidden, fiber)
-
-    def forward(self, features):
-        outputs = self.project_in(features)
-        outputs = self.nonlin(outputs)
-        outputs = self.project_out(outputs)
-        return outputs
-
-class FeedForwardBlockSE3(nn.Module):
-    def __init__(
-        self,
-        fiber,
-    ):
-        super().__init__()
-        self.fiber = fiber
-        self.prenorm = NormSE3(fiber)
-        self.feedforward = FeedForwardSE3(fiber)
-        self.residual = ResidualSE3()
-
-    def forward(self, features):
-        res = features
-        out = self.prenorm(features)
-        out = self.feedforward(out)
-        return self.residual(out, res)
-
-class AttentionSE3(nn.Module):
-    def __init__(
-        self,
-        fiber,
-        dim_head = 64,
-        heads = 8,
-        attend_self = False
-    ):
-        super().__init__()
-        hidden_dim = dim_head * heads
-        hidden_fiber = Fiber(list(map(lambda t: (t[0], hidden_dim), fiber)))
-        self.scale = dim_head ** -0.5
-        self.heads = heads
-
-        self.to_q = LinearSE3(fiber, hidden_fiber)
-        self.to_k = ConvSE3(fiber, hidden_fiber, pool = False, self_interaction = False)
-        self.to_v = ConvSE3(fiber, hidden_fiber, pool = False, self_interaction = False)
-        self.to_out = LinearSE3(hidden_fiber, fiber)
-
-        self.null_keys = nn.ParameterDict()
-        self.null_values = nn.ParameterDict()
-
-        for degree in fiber.degrees:
-            m = 2 * degree + 1
-            degree_key = str(degree)
-            self.null_keys[degree_key] = nn.Parameter(torch.zeros(heads, dim_head, m))
-            self.null_values[degree_key] = nn.Parameter(torch.zeros(heads, dim_head, m))
-
-        self.attend_self = attend_self
-        if attend_self:
-            self.to_self_k = LinearSE3(fiber, hidden_fiber)
-            self.to_self_v = LinearSE3(fiber, hidden_fiber)
-
-    def forward(self, features, edge_info, rel_dist, basis):
-        h, attend_self = self.heads, self.attend_self
-        device, dtype = get_tensor_device_and_dtype(features)
-        neighbor_indices, neighbor_mask = edge_info
-
-        max_neg_value = -torch.finfo().max
-
-        if exists(neighbor_mask):
-            neighbor_mask = rearrange(neighbor_mask, 'b i j -> b () i j')
-
-        neighbor_indices = rearrange(neighbor_indices, 'b i j -> b () i j')
-
-        queries = self.to_q(features)
-        keys, values = self.to_k(features, edge_info, rel_dist, basis), self.to_v(features, edge_info, rel_dist, basis)
-
-        if attend_self:
-            self_keys, self_values = self.to_self_k(features), self.to_self_v(features)
-
-        outputs = {}
-        for degree in features.keys():
-            q, k, v, null_k, null_v = map(lambda t: t[degree], (queries, keys, values, self.null_keys, self.null_values))
-
-            q = rearrange(q, 'b i (h d) m -> b h i d m', h = h)
-            k, v = map(lambda t: rearrange(t, 'b i j (h d) m -> b h i j d m', h = h), (k, v))
-
-            null_k, null_v = map(lambda t: repeat(t, 'h d m -> b h i () d m', b = q.shape[0], i = q.shape[2]), (null_k, null_v))
-            k = torch.cat((null_k, k), dim = 3)
-            v = torch.cat((null_v, v), dim = 3)
-
-            if attend_self:
-                self_k, self_v = map(lambda t: t[degree], (self_keys, self_values))
-                self_k, self_v = map(lambda t: rearrange(t, 'b n (h d) m -> b h n () d m', h = h), (self_k, self_v))
-                k = torch.cat((self_k, k), dim = 3)
-                v = torch.cat((self_v, v), dim = 3)
-
-            sim = einsum('b h i d m, b h i j d m -> b h i j', q, k) * self.scale
-
-            if exists(neighbor_mask):
-                num_left_pad = 2 if attend_self else 1
-                mask = F.pad(neighbor_mask, (num_left_pad, 0), value = True)
-                sim.masked_fill_(~mask, max_neg_value)
-
-            attn = sim.softmax(dim = -1)
-            out = einsum('b h i j, b h i j d m -> b h i d m', attn, v)
-            outputs[degree] = rearrange(out, 'b h n d m -> b n (h d) m')
-
-        return self.to_out(outputs)
-
-class AttentionBlockSE3(nn.Module):
-    def __init__(
-        self,
-        fiber,
-        dim_head = 64,
-        heads = 8,
-        attend_self = False
-    ):
-        super().__init__()
-        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self)
-        self.prenorm = NormSE3(fiber)
-        self.residual = ResidualSE3()
-
-    def forward(self, features, edge_info, rel_dist, basis):
-        res = features
-        outputs = self.prenorm(features)
-        outputs = self.attn(outputs, edge_info, rel_dist, basis)
-        return self.residual(outputs, res)
-
-class ResidualSE3(nn.Module):
-    """ only support instance where both Fibers are identical """
-    def forward(self, x, res):
-        out = {}
-        for degree, tensor in x.items():
-            degree = str(degree)
-            out[degree] = tensor
-            if degree in res:
-                out[degree] = out[degree] + res[degree]
         return out
 
 class NormSE3(nn.Module):
@@ -270,9 +133,9 @@ class NormSE3(nn.Module):
         return output
 
 class ConvSE3(nn.Module):
-    """A tensor field network layer as a DGL module.
+    """A tensor field network layer
     
-    GConvSE3 stands for a Graph Convolution SE(3)-equivariant layer. It is the 
+    ConvSE3 stands for a Convolution SE(3)-equivariant layer. It is the 
     equivalent of a linear layer in an MLP, a conv layer in a CNN, or a graph
     conv layer in a GCN.
 
@@ -302,7 +165,6 @@ class ConvSE3(nn.Module):
         self.pool = pool
 
         # Center -> center weights
-
         if self_interaction:
             assert self.pool, 'must pool edges if followed with self interaction'
             self.self_interact = LinearSE3(fiber_in, fiber_out)
@@ -417,6 +279,147 @@ class PairwiseConv(nn.Module):
         kernel = torch.sum(R * basis[f'{self.degree_in},{self.degree_out}'], dim = -1)
         out =  kernel.view(*kernel.shape[:3], self.d_out * self.nc_out, -1)
         return out
+
+# feed forwards
+
+class FeedForwardSE3(nn.Module):
+    def __init__(
+        self,
+        fiber,
+        mult = 4
+    ):
+        super().__init__()
+        self.fiber = fiber
+        fiber_hidden = Fiber(list(map(lambda t: (t[0], t[1] * mult), fiber)))
+
+        self.project_in  = LinearSE3(fiber, fiber_hidden)
+        self.nonlin      = NormSE3(fiber_hidden)
+        self.project_out = LinearSE3(fiber_hidden, fiber)
+
+    def forward(self, features):
+        outputs = self.project_in(features)
+        outputs = self.nonlin(outputs)
+        outputs = self.project_out(outputs)
+        return outputs
+
+class FeedForwardBlockSE3(nn.Module):
+    def __init__(
+        self,
+        fiber,
+    ):
+        super().__init__()
+        self.fiber = fiber
+        self.prenorm = NormSE3(fiber)
+        self.feedforward = FeedForwardSE3(fiber)
+        self.residual = ResidualSE3()
+
+    def forward(self, features):
+        res = features
+        out = self.prenorm(features)
+        out = self.feedforward(out)
+        return self.residual(out, res)
+
+# attention
+
+class AttentionSE3(nn.Module):
+    def __init__(
+        self,
+        fiber,
+        dim_head = 64,
+        heads = 8,
+        attend_self = False
+    ):
+        super().__init__()
+        hidden_dim = dim_head * heads
+        hidden_fiber = Fiber(list(map(lambda t: (t[0], hidden_dim), fiber)))
+        self.scale = dim_head ** -0.5
+        self.heads = heads
+
+        self.to_q = LinearSE3(fiber, hidden_fiber)
+        self.to_k = ConvSE3(fiber, hidden_fiber, pool = False, self_interaction = False)
+        self.to_v = ConvSE3(fiber, hidden_fiber, pool = False, self_interaction = False)
+        self.to_out = LinearSE3(hidden_fiber, fiber)
+
+        self.null_keys = nn.ParameterDict()
+        self.null_values = nn.ParameterDict()
+
+        for degree in fiber.degrees:
+            m = 2 * degree + 1
+            degree_key = str(degree)
+            self.null_keys[degree_key] = nn.Parameter(torch.zeros(heads, dim_head, m))
+            self.null_values[degree_key] = nn.Parameter(torch.zeros(heads, dim_head, m))
+
+        self.attend_self = attend_self
+        if attend_self:
+            self.to_self_k = LinearSE3(fiber, hidden_fiber)
+            self.to_self_v = LinearSE3(fiber, hidden_fiber)
+
+    def forward(self, features, edge_info, rel_dist, basis):
+        h, attend_self = self.heads, self.attend_self
+        device, dtype = get_tensor_device_and_dtype(features)
+        neighbor_indices, neighbor_mask = edge_info
+
+        max_neg_value = -torch.finfo().max
+
+        if exists(neighbor_mask):
+            neighbor_mask = rearrange(neighbor_mask, 'b i j -> b () i j')
+
+        neighbor_indices = rearrange(neighbor_indices, 'b i j -> b () i j')
+
+        queries = self.to_q(features)
+        keys, values = self.to_k(features, edge_info, rel_dist, basis), self.to_v(features, edge_info, rel_dist, basis)
+
+        if attend_self:
+            self_keys, self_values = self.to_self_k(features), self.to_self_v(features)
+
+        outputs = {}
+        for degree in features.keys():
+            q, k, v, null_k, null_v = map(lambda t: t[degree], (queries, keys, values, self.null_keys, self.null_values))
+
+            q = rearrange(q, 'b i (h d) m -> b h i d m', h = h)
+            k, v = map(lambda t: rearrange(t, 'b i j (h d) m -> b h i j d m', h = h), (k, v))
+
+            null_k, null_v = map(lambda t: repeat(t, 'h d m -> b h i () d m', b = q.shape[0], i = q.shape[2]), (null_k, null_v))
+            k = torch.cat((null_k, k), dim = 3)
+            v = torch.cat((null_v, v), dim = 3)
+
+            if attend_self:
+                self_k, self_v = map(lambda t: t[degree], (self_keys, self_values))
+                self_k, self_v = map(lambda t: rearrange(t, 'b n (h d) m -> b h n () d m', h = h), (self_k, self_v))
+                k = torch.cat((self_k, k), dim = 3)
+                v = torch.cat((self_v, v), dim = 3)
+
+            sim = einsum('b h i d m, b h i j d m -> b h i j', q, k) * self.scale
+
+            if exists(neighbor_mask):
+                num_left_pad = 2 if attend_self else 1
+                mask = F.pad(neighbor_mask, (num_left_pad, 0), value = True)
+                sim.masked_fill_(~mask, max_neg_value)
+
+            attn = sim.softmax(dim = -1)
+            out = einsum('b h i j, b h i j d m -> b h i d m', attn, v)
+            outputs[degree] = rearrange(out, 'b h n d m -> b n (h d) m')
+
+        return self.to_out(outputs)
+
+class AttentionBlockSE3(nn.Module):
+    def __init__(
+        self,
+        fiber,
+        dim_head = 64,
+        heads = 8,
+        attend_self = False
+    ):
+        super().__init__()
+        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self)
+        self.prenorm = NormSE3(fiber)
+        self.residual = ResidualSE3()
+
+    def forward(self, features, edge_info, rel_dist, basis):
+        res = features
+        outputs = self.prenorm(features)
+        outputs = self.attn(outputs, edge_info, rel_dist, basis)
+        return self.residual(outputs, res)
 
 # main class
 

@@ -7,33 +7,9 @@ import torch.nn.functional as F
 from torch import nn, einsum
 
 from se3_transformer_pytorch.basis import get_basis
-from se3_transformer_pytorch.utils import exists, default
+from se3_transformer_pytorch.utils import exists, default, batched_index_select, masked_mean
 
 from einops import rearrange, repeat
-
-# helpers
-
-def batched_index_select(values, indices, dim = 1):
-    value_dims = values.shape[(dim + 1):]
-    values_shape, indices_shape = map(lambda t: list(t.shape), (values, indices))
-    indices = indices[(..., *((None,) * len(value_dims)))]
-    indices = indices.expand(*((-1,) * len(indices_shape)), *value_dims)
-    value_expand_len = len(indices_shape) - (dim + 1)
-    values = values[(*((slice(None),) * dim), *((None,) * value_expand_len), ...)]
-
-    value_expand_shape = [-1] * len(values.shape)
-    expand_slice = slice(dim, (dim + value_expand_len))
-    value_expand_shape[expand_slice] = indices.shape[expand_slice]
-    values = values.expand(*value_expand_shape)
-
-    dim += value_expand_len
-    return values.gather(dim, indices)
-
-def masked_mean(tensor, mask, dim = -1):
-    diff_len = len(tensor.shape) - len(mask.shape)
-    mask = mask[(..., *((None,) * diff_len))]
-    tensor.masked_fill_(~mask, 0.)
-    return tensor.sum(dim = dim) / mask.sum(dim = dim)
 
 # fiber helpers
 

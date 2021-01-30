@@ -54,6 +54,20 @@ mask  = torch.ones(2, 32).bool()
 refinement = model(features, coors, mask, return_type = 1) # (2, 32, 32, 3)
 ```
 
+## Caching
+
+By default, the basis vectors are cached. However, if there is ever the need to clear the cache, you simply have to set the environmental flag `CLEAR_CACHE` to some value on initiating the script
+
+```bash
+$ CLEAR_CACHE=1 python train.py
+```
+
+Or you can try deleting the cache directory, which should exist at
+
+```bash
+$ rm -rf ~/.cache.equivariant_attention
+```
+
 ## Testing
 
 ```bash

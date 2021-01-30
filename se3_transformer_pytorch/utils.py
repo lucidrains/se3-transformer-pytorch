@@ -16,6 +16,28 @@ def exists(val):
 def default(val, d):
     return val if exists(val) else d
 
+def batched_index_select(values, indices, dim = 1):
+    value_dims = values.shape[(dim + 1):]
+    values_shape, indices_shape = map(lambda t: list(t.shape), (values, indices))
+    indices = indices[(..., *((None,) * len(value_dims)))]
+    indices = indices.expand(*((-1,) * len(indices_shape)), *value_dims)
+    value_expand_len = len(indices_shape) - (dim + 1)
+    values = values[(*((slice(None),) * dim), *((None,) * value_expand_len), ...)]
+
+    value_expand_shape = [-1] * len(values.shape)
+    expand_slice = slice(dim, (dim + value_expand_len))
+    value_expand_shape[expand_slice] = indices.shape[expand_slice]
+    values = values.expand(*value_expand_shape)
+
+    dim += value_expand_len
+    return values.gather(dim, indices)
+
+def masked_mean(tensor, mask, dim = -1):
+    diff_len = len(tensor.shape) - len(mask.shape)
+    mask = mask[(..., *((None,) * diff_len))]
+    tensor.masked_fill_(~mask, 0.)
+    return tensor.sum(dim = dim) / mask.sum(dim = dim)
+
 # default dtype context manager
 
 @contextlib.contextmanager
@@ -73,6 +95,9 @@ def cache_dir(dirname, maxsize=128):
         @lru_cache(maxsize=maxsize)
         @wraps(func)
         def wrapper(*args, **kwargs):
+            if not exists(dirname):
+                return func(*args, **kwargs)
+
             os.makedirs(dirname, exist_ok = True)
 
             indexfile = os.path.join(dirname, "index.pkl")

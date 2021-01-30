@@ -6,12 +6,12 @@ from einops import rearrange
 from itertools import product
 
 from se3_transformer_pytorch.irr_repr import irr_repr, spherical_harmonics
-from se3_transformer_pytorch.utils import torch_default_dtype, cache_dir
+from se3_transformer_pytorch.utils import torch_default_dtype, cache_dir, exists
 from se3_transformer_pytorch.spherical_harmonics import clear_spherical_harmonics_cache
 
 # constants
 
-CACHE_PATH = os.path.expanduser('~/.cache.equivariant_attention')
+CACHE_PATH = os.path.expanduser('~/.cache.equivariant_attention') if not exists(os.environ.get('CLEAR_CACHE')) else None
 
 # todo (figure ot why this was hard coded in official repo)
 

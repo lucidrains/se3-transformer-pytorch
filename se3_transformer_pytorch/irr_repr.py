@@ -1,5 +1,5 @@
 import torch
-from torch import sin, cos
+from torch import sin, cos, atan2, acos
 from math import pi
 from functools import wraps
 import numpy as np
@@ -55,8 +55,8 @@ def x_to_alpha_beta(x):
     Convert point (x, y, z) on the sphere into (alpha, beta)
     '''
     x = x / torch.norm(x)
-    beta = torch.acos(x[2])
-    alpha = torch.atan2(x[1], x[0])
+    beta = acos(x[2])
+    alpha = atan2(x[1], x[0])
     return (alpha, beta)
 
 def rot(alpha, beta, gamma):
@@ -73,5 +73,5 @@ def compose(a1, b1, c1, a2, b2, c2):
     xyz = comp @ torch.tensor([0, 0, 1.])
     a, b = x_to_alpha_beta(xyz)
     rotz = rot(0, -b, -a) @ comp
-    c = torch.atan2(rotz[1, 0], rotz[0, 0])
+    c = atan2(rotz[1, 0], rotz[0, 0])
     return a, b, c

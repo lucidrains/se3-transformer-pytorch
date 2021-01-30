@@ -183,22 +183,16 @@ class AttentionSE3(nn.Module):
 
             sim = einsum('b h i d m, b h i j d m -> b h i j', q, k) * self.scale
 
-            i, j = sim.shape[2:]
-
             if exists(neighbor_mask):
                 num_left_pad = 2 if attend_self else 1
                 mask = F.pad(neighbor_mask, (num_left_pad, 0), value = True)
                 sim.masked_fill_(~mask, max_neg_value)
 
-            seq = torch.arange(i, device = device)
-            seq = rearrange(seq, 'i -> () () i ()')
-
             attn = sim.softmax(dim = -1)
             out = einsum('b h i j, b h i j d m -> b h i d m', attn, v)
             outputs[degree] = rearrange(out, 'b h n d m -> b n (h d) m')
 
-        outputs = self.to_out(queries)
-        return outputs
+        return self.to_out(outputs)
 
 class AttentionBlockSE3(nn.Module):
     def __init__(

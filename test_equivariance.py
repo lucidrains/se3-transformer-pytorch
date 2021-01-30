@@ -19,7 +19,8 @@ def test_transformer():
 def test_equivariance():
     model = SE3Transformer(
         dim = 64,
-        depth = 1,
+        depth = 2,
+        attend_self = True,
         num_degrees = 2,
         output_degrees = 2
     )
@@ -33,4 +34,4 @@ def test_equivariance():
     out2 = model(feats, coors, mask, return_type = 1) @ R
 
     diff = (out1 - out2).max()
-    assert diff < 1e-3, 'is not equivariant'
+    assert diff < 1e-4, 'is not equivariant'

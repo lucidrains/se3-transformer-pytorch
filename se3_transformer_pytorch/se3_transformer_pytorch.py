@@ -142,7 +142,8 @@ class AttentionSE3(nn.Module):
         self,
         fiber,
         dim_head = 64,
-        heads = 8
+        heads = 8,
+        attend_self = False
     ):
         super().__init__()
         hidden_dim = dim_head * heads
@@ -155,20 +156,28 @@ class AttentionSE3(nn.Module):
         self.to_v = ConvSE3(fiber, hidden_fiber, pool = False, self_interaction = False)
         self.to_out = LinearSE3(hidden_fiber, fiber)
 
+        self.attend_self = attend_self
+        if attend_self:
+            self.to_self_k = LinearSE3(fiber, hidden_fiber)
+            self.to_self_v = LinearSE3(fiber, hidden_fiber)
+
     def forward(self, features, edge_info, rel_dist, basis):
-        h = self.heads
+        h, attend_self = self.heads, self.attend_self
         device, dtype = get_tensor_device_and_dtype(features)
-        neighbor_indices, neighbor_masks = edge_info
+        neighbor_indices, neighbor_mask = edge_info
 
         max_neg_value = -torch.finfo().max
 
-        if exists(neighbor_masks):
-            neighbor_masks = rearrange(neighbor_masks, 'b i j -> b () i j')
+        if exists(neighbor_mask):
+            neighbor_mask = rearrange(neighbor_mask, 'b i j -> b () i j')
 
         neighbor_indices = rearrange(neighbor_indices, 'b i j -> b () i j')
 
         queries = self.to_q(features)
         keys, values = self.to_k(features, edge_info, rel_dist, basis), self.to_v(features, edge_info, rel_dist, basis)
+
+        if attend_self:
+            self_keys, self_values = self.to_self_k(features), self.to_self_v(features)
 
         outputs = {}
         for degree in features.keys():
@@ -177,12 +186,21 @@ class AttentionSE3(nn.Module):
             q = rearrange(q, 'b i (h d) m -> b h i d m', h = h)
             k, v = map(lambda t: rearrange(t, 'b i j (h d) m -> b h i j d m', h = h), (k, v))
 
+            if attend_self:
+                self_k, self_v = map(lambda t: t[degree], (self_keys, self_values))
+                self_k, self_v = map(lambda t: rearrange(t, 'b n (h d) m -> b h n () d m', h = h), (self_k, self_v))
+                k = torch.cat((self_k, k), dim = 3)
+                v = torch.cat((self_v, v), dim = 3)
+
             sim = einsum('b h i d m, b h i j d m -> b h i j', q, k) * self.scale
 
             i, j = sim.shape[2:]
 
-            if exists(neighbor_masks):
-                sim.masked_fill_(~neighbor_masks, max_neg_value)
+            if exists(neighbor_mask):
+                mask = neighbor_mask
+                if attend_self:
+                    mask = F.pad(mask, (1, 0), value = True)
+                sim.masked_fill_(~mask, max_neg_value)
 
             seq = torch.arange(i, device = device)
             seq = rearrange(seq, 'i -> () () i ()')
@@ -199,10 +217,11 @@ class AttentionBlockSE3(nn.Module):
         self,
         fiber,
         dim_head = 64,
-        heads = 8
+        heads = 8,
+        attend_self = False
     ):
         super().__init__()
-        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head)
+        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self)
         self.prenorm = NormSE3(fiber)
         self.residual = ResidualSE3()
 
@@ -428,6 +447,7 @@ class SE3Transformer(nn.Module):
         heads = 8,
         dim_head = 64,
         depth = 2,
+        attend_self = False,
         num_degrees = 2,
         input_degrees = 1,
         output_degrees = 2
@@ -449,7 +469,7 @@ class SE3Transformer(nn.Module):
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head),
+                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self),
                 FeedForwardBlockSE3(fiber_hidden)
             ]))
 

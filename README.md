@@ -29,7 +29,7 @@ mask  = torch.ones(1, 1024).bool()
 out = model(feats, coors, mask) # (1, 1024, 512)
 ```
 
-Example usage for Alphafold2
+Potential example usage in Alphafold2, as outlined <a href="https://fabianfuchsml.github.io/alphafold2/">here</a>
 
 ```python
 import torch
@@ -49,6 +49,29 @@ coors = torch.randn(2, 32, 3)
 mask  = torch.ones(2, 32).bool()
 
 refinement = model(atom_feats, coors, mask, return_type = 1) # (2, 32, 3)
+```
+
+You can also let the base transformer class take care of embedding the type 0 features being passed in. Assuming they are atoms
+
+```python
+import torch
+from se3_transformer_pytorch import SE3Transformer
+
+model = SE3Transformer(
+    num_tokens = 28,       # 28 unique atoms
+    dim = 64,
+    depth = 2,
+    input_degrees = 1,
+    num_degrees = 2,
+    output_degrees = 2,
+    reduce_dim_out = True
+)
+
+atoms = torch.randint(0, 28, (2, 32))
+coors = torch.randn(2, 32, 3)
+mask  = torch.ones(2, 32).bool()
+
+refinement = model(atoms, coors, mask, return_type = 1) # (2, 32, 3)
 ```
 
 If you think the net could further benefit from positional encoding, you can featurize your positions in space and pass it in as follows.

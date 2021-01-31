@@ -437,12 +437,17 @@ class SE3Transformer(nn.Module):
         input_degrees = 1,
         output_degrees = 2,
         valid_radius = 1e5,
-        reduce_dim_out = False
+        reduce_dim_out = False,
+        num_tokens = None
     ):
         super().__init__()
         assert num_neighbors > 0, 'neighbors must be at least 1'
         self.dim = dim
         self.valid_radius = valid_radius
+
+        self.token_emb = None
+        if exists(num_tokens):
+            self.token_emb = nn.Embedding(num_tokens, dim)
 
         self.input_degrees = input_degrees
         self.num_degrees = num_degrees
@@ -469,6 +474,9 @@ class SE3Transformer(nn.Module):
         ) if reduce_dim_out else None
 
     def forward(self, feats, coors, mask = None, return_type = None):
+        if exists(self.token_emb):
+            feats = self.token_emb(feats)
+
         if torch.is_tensor(feats):
             feats = {'0': feats[..., None]}
 

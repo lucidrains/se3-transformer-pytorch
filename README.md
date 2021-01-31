@@ -40,7 +40,8 @@ model = SE3Transformer(
     depth = 2,
     input_degrees = 2,
     num_degrees = 2,
-    output_degrees = 2
+    output_degrees = 2,
+    reduce_dim_out = True  # reduce out the final dimension
 )
 
 atom_feats = torch.randn(2, 32, 64, 1) # b x n x d x type0
@@ -51,7 +52,7 @@ features = {'0': atom_feats, '1': pred_coors}
 coors = torch.randn(2, 32, 3)
 mask  = torch.ones(2, 32).bool()
 
-refinement = model(features, coors, mask, return_type = 1) # (2, 32, 64, 3) - b x n x d x type1
+refinement = model(features, coors, mask, return_type = 1) # (2, 32, 3) - equivariant to input type 1 features and coordinates
 ```
 
 ## Caching

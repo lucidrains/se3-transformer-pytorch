@@ -436,7 +436,8 @@ class SE3Transformer(nn.Module):
         num_degrees = 2,
         input_degrees = 1,
         output_degrees = 2,
-        valid_radius = 1e5
+        valid_radius = 1e5,
+        reduce_dim_out = False
     ):
         super().__init__()
         assert num_neighbors > 0, 'neighbors must be at least 1'
@@ -461,6 +462,11 @@ class SE3Transformer(nn.Module):
             ]))
 
         self.conv_out = ConvSE3(fiber_hidden, fiber_out)
+
+        self.linear_out = LinearSE3(
+            fiber_out,
+            Fiber.create(output_degrees, 1)
+        ) if reduce_dim_out else None
 
     def forward(self, feats, coors, mask = None, return_type = None):
         if torch.is_tensor(feats):
@@ -514,6 +520,10 @@ class SE3Transformer(nn.Module):
             x = ff(x)
 
         x = self.conv_out(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
+
+        if exists(self.linear_out):
+            x = self.linear_out(x)
+            x = {k: v.squeeze(dim = 2) for k, v in x.items()}
 
         if exists(return_type):
             return x[str(return_type)]

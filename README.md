@@ -36,22 +36,22 @@ import torch
 from se3_transformer_pytorch import SE3Transformer
 
 model = SE3Transformer(
-    dim = 32,
+    dim = 64,
     depth = 2,
     input_degrees = 2,
     num_degrees = 2,
     output_degrees = 2
 )
 
-atom_feats = torch.randn(2, 32, 32, 1)
-pred_coors = torch.randn(2, 32, 32, 3)
+atom_feats = torch.randn(2, 32, 64, 1) # b x n x d x type0
+pred_coors = torch.randn(2, 32, 64, 3) # b x n x d x type1
 
 # atom features are type 0, predicted coordinates are type 1
 features = {'0': atom_feats, '1': pred_coors}
 coors = torch.randn(2, 32, 3)
 mask  = torch.ones(2, 32).bool()
 
-refinement = model(features, coors, mask, return_type = 1) # (2, 32, 32, 3)
+refinement = model(features, coors, mask, return_type = 1) # (2, 32, 64, 3) - b x n x d x type1
 ```
 
 ## Caching

@@ -38,8 +38,9 @@ def irr_repr(order, alpha, beta, gamma, dtype = None):
     irreducible representation of SO3
     - compatible with compose and spherical_harmonics
     """
+    cast_ = cast_torch_tensor(lambda t: t)
     dtype = default(dtype, torch.get_default_dtype())
-    alpha, beta, gamma = map(torch.tensor, (alpha, beta, gamma))
+    alpha, beta, gamma = map(cast_, (alpha, beta, gamma))
     return wigner_d_matrix(order, alpha, beta, gamma, dtype = dtype)
 
 @cast_torch_tensor

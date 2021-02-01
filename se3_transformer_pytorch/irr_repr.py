@@ -1,22 +1,38 @@
+import os
 import torch
 from torch import sin, cos, atan2, acos
 from math import pi
+from pathlib import Path
 from functools import wraps
-import numpy as np
-
-from lie_learn.representations.SO3.wigner_d import wigner_D_matrix
 
 from se3_transformer_pytorch.utils import exists, default, cast_torch_tensor
 from se3_transformer_pytorch.spherical_harmonics import get_spherical_harmonics, clear_spherical_harmonics_cache
 
+path = Path(os.path.dirname(__file__)) / 'data' / 'J_dense.pt'
+Jd = torch.load(str(path))
+
 def spherical_harmonics(order, alpha, beta, dtype = None):  
-    """ 
-    spherical harmonics 
-    - compatible with irr_repr and compose  
-    computation time: executing 1000 times with array length 1 took 0.29 seconds;   
-    executing it once with array of length 1000 took 0.0022 seconds 
-    """ 
     return get_spherical_harmonics(order, theta = (pi - beta), phi = alpha)
+
+def wigner_d_matrix(degree, alpha, beta, gamma, dtype = None, device = None):
+    """Create wigner D matrices for batch of ZYZ Euler anglers for degree l."""
+    J = Jd[degree].type(dtype).to(device)
+    x_a = z_rot_mat(alpha, degree)
+    x_b = z_rot_mat(beta, degree)
+    x_c = z_rot_mat(gamma, degree)
+    res = x_a.matmul(J).matmul(x_b).matmul(J).matmul(x_c)
+    return res.view(2*degree+1, 2*degree+1)
+
+def z_rot_mat(angle, l):
+    device, dtype = angle.device, angle.dtype
+    m = angle.new_zeros((2 * l + 1, 2 * l + 1))
+    inds = torch.arange(0, 2 * l + 1, 1, dtype=torch.long, device=device)
+    reversed_inds = torch.arange(2 * l, -1, -1, dtype=torch.long, device=device)
+    frequencies = torch.arange(l, -l - 1, -1, dtype=dtype, device=device)[None]
+
+    m[inds, reversed_inds] = torch.sin(frequencies * angle[None])
+    m[inds, inds] = torch.cos(frequencies * angle[None])
+    return m
 
 def irr_repr(order, alpha, beta, gamma, dtype = None):
     """
@@ -24,8 +40,8 @@ def irr_repr(order, alpha, beta, gamma, dtype = None):
     - compatible with compose and spherical_harmonics
     """
     dtype = default(dtype, torch.get_default_dtype())
-    alpha, beta, gamma = map(np.array, (alpha, beta, gamma))
-    return torch.tensor(wigner_D_matrix(order, alpha, beta, gamma), dtype = dtype)
+    alpha, beta, gamma = map(torch.tensor, (alpha, beta, gamma))
+    return wigner_d_matrix(order, alpha, beta, gamma, dtype = dtype)
 
 @cast_torch_tensor
 def rot_z(gamma):

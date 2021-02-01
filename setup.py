@@ -2,8 +2,9 @@ from setuptools import setup, find_packages
 
 setup(
   name = 'se3-transformer-pytorch',
-  packages = find_packages(exclude=['examples']),
-  version = '0.0.8',
+  packages = find_packages(),
+  include_package_data = True,
+  version = '0.0.9',
   license='MIT',
   description = 'SE3 Transformer - Pytorch',
   author = 'Phil Wang',
@@ -20,6 +21,7 @@ setup(
     'einops>=0.3',
     'filelock',
     'lie_learn',
+    'numpy',
     'torch>=1.6'
   ],
   setup_requires=[

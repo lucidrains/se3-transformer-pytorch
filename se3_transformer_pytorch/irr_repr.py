@@ -11,27 +11,26 @@ from se3_transformer_pytorch.spherical_harmonics import get_spherical_harmonics,
 path = Path(os.path.dirname(__file__)) / 'data' / 'J_dense.pt'
 Jd = torch.load(str(path))
 
-def spherical_harmonics(order, alpha, beta, dtype = None):  
-    return get_spherical_harmonics(order, theta = (pi - beta), phi = alpha)
-
 def wigner_d_matrix(degree, alpha, beta, gamma, dtype = None, device = None):
     """Create wigner D matrices for batch of ZYZ Euler anglers for degree l."""
     J = Jd[degree].type(dtype).to(device)
+    order = 2 * degree + 1
     x_a = z_rot_mat(alpha, degree)
     x_b = z_rot_mat(beta, degree)
     x_c = z_rot_mat(gamma, degree)
-    res = x_a.matmul(J).matmul(x_b).matmul(J).matmul(x_c)
-    return res.view(2*degree+1, 2*degree+1)
+    res = x_a @ J @ x_b @ J @ x_c
+    return res.view(order, order)
 
 def z_rot_mat(angle, l):
     device, dtype = angle.device, angle.dtype
-    m = angle.new_zeros((2 * l + 1, 2 * l + 1))
-    inds = torch.arange(0, 2 * l + 1, 1, dtype=torch.long, device=device)
+    order = 2 * l + 1
+    m = angle.new_zeros((order, order))
+    inds = torch.arange(0, order, 1, dtype=torch.long, device=device)
     reversed_inds = torch.arange(2 * l, -1, -1, dtype=torch.long, device=device)
     frequencies = torch.arange(l, -l - 1, -1, dtype=dtype, device=device)[None]
 
-    m[inds, reversed_inds] = torch.sin(frequencies * angle[None])
-    m[inds, inds] = torch.cos(frequencies * angle[None])
+    m[inds, reversed_inds] = sin(frequencies * angle[None])
+    m[inds, inds] = cos(frequencies * angle[None])
     return m
 
 def irr_repr(order, alpha, beta, gamma, dtype = None):
@@ -91,3 +90,6 @@ def compose(a1, b1, c1, a2, b2, c2):
     rotz = rot(0, -b, -a) @ comp
     c = atan2(rotz[1, 0], rotz[0, 0])
     return a, b, c
+
+def spherical_harmonics(order, alpha, beta, dtype = None):
+    return get_spherical_harmonics(order, theta = (pi - beta), phi = alpha)

@@ -110,14 +110,14 @@ import torch
 from se3_transformer_pytorch import SE3Transformer
 
 model = SE3Transformer(
-    dim = 64,
     num_tokens = 28,
-    num_edge_tokens = 4,   # number of unique edge types, say 4 bond types
-    edge_dim = 16,         # the embedding dimension of the edge
+    num_edge_tokens = 4,
+    dim = 64,
+    edge_dim = 16,
     depth = 2,
     input_degrees = 1,
-    num_degrees = 2,
-    output_degrees = 2,
+    num_degrees = 3,
+    output_degrees = 1,
     reduce_dim_out = True
 )
 
@@ -126,7 +126,7 @@ bonds = torch.randint(0, 4, (2, 32, 32))
 coors = torch.randn(2, 32, 3)
 mask  = torch.ones(2, 32).bool()
 
-refinement = model(atoms, coors, mask, edges = bonds, return_type = 1) # (2, 32, 32, 3)
+pred = model(atoms, coors, mask, edges = bonds, return_type = 0) # (2, 32, 1)
 ```
 
 ## Caching

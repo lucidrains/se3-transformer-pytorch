@@ -20,8 +20,6 @@ setup(
   install_requires=[
     'einops>=0.3',
     'filelock',
-    'lie_learn',
-    'numpy',
     'torch>=1.6'
   ],
   setup_requires=[
@@ -29,6 +27,8 @@ setup(
   ],
   tests_require=[
     'pytest',
+    'lie_learn',
+    'numpy',
   ],
   classifiers=[
     'Development Status :: 4 - Beta',

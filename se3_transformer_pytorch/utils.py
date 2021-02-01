@@ -16,6 +16,9 @@ def exists(val):
 def default(val, d):
     return val if exists(val) else d
 
+def to_order(degree):
+    return 2 * degree + 1
+
 def batched_index_select(values, indices, dim = 1):
     value_dims = values.shape[(dim + 1):]
     values_shape, indices_shape = map(lambda t: list(t.shape), (values, indices))

@@ -6,7 +6,7 @@ from einops import rearrange
 from itertools import product
 
 from se3_transformer_pytorch.irr_repr import irr_repr, spherical_harmonics
-from se3_transformer_pytorch.utils import torch_default_dtype, cache_dir, exists
+from se3_transformer_pytorch.utils import torch_default_dtype, cache_dir, exists, to_order
 from se3_transformer_pytorch.spherical_harmonics import clear_spherical_harmonics_cache
 
 # constants
@@ -125,7 +125,7 @@ def basis_transformation_Q_J(J, order_in, order_out, random_angles = RANDOM_ANGL
     null_space = get_matrices_kernel(sylvester_submatrices)
     assert null_space.size(0) == 1, null_space.size()  # unique subspace solution
     Q_J = null_space[0]  # [(m_out * m_in) * m]
-    Q_J = Q_J.view((2 * order_out + 1) * (2 * order_in + 1), 2 * J + 1)  # [m_out * m_in, m]
+    Q_J = Q_J.view(to_order(order_out) * to_order(order_in), to_order(J))  # [m_out * m_in, m]
     return Q_J.float()  # [m_out * m_in, m]
 
 def precompute_sh(r_ij, max_J):
@@ -170,7 +170,7 @@ def get_basis(r_ij, max_degree):
     basis = {}
     for d_in, d_out in product(range(max_degree+1), range(max_degree+1)):
         K_Js = []
-        for J in range(abs(d_in-d_out), d_in+d_out+1):
+        for J in range(abs(d_in - d_out), d_in + d_out + 1):
             # Get spherical harmonic projection matrices
             Q_J = basis_transformation_Q_J(J, d_in, d_out)
             Q_J = Q_J.float().to(device)
@@ -181,7 +181,7 @@ def get_basis(r_ij, max_degree):
 
         # Reshape so can take linear combinations with a dot product
         K_Js = torch.stack(K_Js, dim = -1)
-        size = (*r_ij.shape[:-1], 1, 2*d_out+1, 1, 2*d_in+1, 2*min(d_in,d_out)+1)
+        size = (*r_ij.shape[:-1], 1, to_order(d_out), 1, to_order(d_in), to_order(min(d_in,d_out)))
         basis[f'{d_in},{d_out}'] = K_Js.view(*size)
 
     return basis

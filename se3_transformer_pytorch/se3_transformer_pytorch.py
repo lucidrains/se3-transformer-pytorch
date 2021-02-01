@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import nn, einsum
 
 from se3_transformer_pytorch.basis import get_basis
-from se3_transformer_pytorch.utils import exists, default, batched_index_select, masked_mean
+from se3_transformer_pytorch.utils import exists, default, batched_index_select, masked_mean, to_order
 
 from einops import rearrange, repeat
 
@@ -196,7 +196,7 @@ class ConvSE3(nn.Module):
             for degree_in, m_in in self.fiber_in:
                 x = inp[str(degree_in)]
                 x = batched_index_select(x, neighbor_indices, dim = 1)
-                x = x.view(*x.shape[:3], (2 * degree_in + 1) * m_in, 1)
+                x = x.view(*x.shape[:3], to_order(degree_in) * m_in, 1)
 
                 etype = f'({degree_in},{degree_out})'
                 kernel = kernels[etype]
@@ -206,7 +206,7 @@ class ConvSE3(nn.Module):
                 output = masked_mean(output, neighbor_masks, dim = 2) if exists(neighbor_masks) else output.mean(dim = 2)
 
             leading_shape = x.shape[:2] if self.pool else x.shape[:3]
-            output = output.view(*leading_shape, -1, 2 * degree_out + 1)
+            output = output.view(*leading_shape, -1, to_order(degree_out))
 
             outputs[degree_out_key] = output
 
@@ -269,8 +269,8 @@ class PairwiseConv(nn.Module):
         self.nc_in = nc_in
         self.nc_out = nc_out
 
-        self.num_freq = 2 * min(degree_in, degree_out) + 1
-        self.d_out = 2 * degree_out + 1
+        self.num_freq = to_order(min(degree_in, degree_out))
+        self.d_out = to_order(degree_out)
         self.edge_dim = edge_dim
 
         self.rp = RadialFunc(self.num_freq, nc_in, nc_out, edge_dim)
@@ -346,7 +346,7 @@ class AttentionSE3(nn.Module):
         self.null_values = nn.ParameterDict()
 
         for degree in fiber.degrees:
-            m = 2 * degree + 1
+            m = to_order(degree)
             degree_key = str(degree)
             self.null_keys[degree_key] = nn.Parameter(torch.zeros(heads, dim_head, m))
             self.null_values[degree_key] = nn.Parameter(torch.zeros(heads, dim_head, m))

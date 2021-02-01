@@ -5,7 +5,7 @@ from math import pi
 from pathlib import Path
 from functools import wraps
 
-from se3_transformer_pytorch.utils import exists, default, cast_torch_tensor
+from se3_transformer_pytorch.utils import exists, default, cast_torch_tensor, to_order
 from se3_transformer_pytorch.spherical_harmonics import get_spherical_harmonics, clear_spherical_harmonics_cache
 
 path = Path(os.path.dirname(__file__)) / 'data' / 'J_dense.pt'
@@ -14,7 +14,7 @@ Jd = torch.load(str(path))
 def wigner_d_matrix(degree, alpha, beta, gamma, dtype = None, device = None):
     """Create wigner D matrices for batch of ZYZ Euler anglers for degree l."""
     J = Jd[degree].type(dtype).to(device)
-    order = 2 * degree + 1
+    order = to_order(degree)
     x_a = z_rot_mat(alpha, degree)
     x_b = z_rot_mat(beta, degree)
     x_c = z_rot_mat(gamma, degree)
@@ -23,7 +23,7 @@ def wigner_d_matrix(degree, alpha, beta, gamma, dtype = None, device = None):
 
 def z_rot_mat(angle, l):
     device, dtype = angle.device, angle.dtype
-    order = 2 * l + 1
+    order = to_order(l)
     m = angle.new_zeros((order, order))
     inds = torch.arange(0, order, 1, dtype=torch.long, device=device)
     reversed_inds = torch.arange(2 * l, -1, -1, dtype=torch.long, device=device)

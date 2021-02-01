@@ -19,7 +19,8 @@ model = SE3Transformer(
     heads = 8,
     depth = 6,
     dim_head = 64,
-    num_degrees = 4
+    num_degrees = 4,
+    valid_radius = 10
 )
 
 feats = torch.randn(1, 1024, 512)
@@ -98,6 +99,34 @@ coors = torch.randn(2, 32, 3)
 mask  = torch.ones(2, 32).bool()
 
 refinement = model(features, coors, mask, return_type = 1) # (2, 32, 3) - equivariant to input type 1 features and coordinates
+```
+
+## Edges
+
+To offer edge information to SE3 Transformers (say bond types between atoms), you just have to pass in two more keyword arguments on initialization.
+
+```python
+import torch
+from se3_transformer_pytorch import SE3Transformer
+
+model = SE3Transformer(
+    dim = 64,
+    num_tokens = 28,
+    num_edge_tokens = 4,   # number of unique edge types, say 4 bond types
+    edge_dim = 16,         # the embedding dimension of the edge
+    depth = 2,
+    input_degrees = 1,
+    num_degrees = 2,
+    output_degrees = 2,
+    reduce_dim_out = True
+)
+
+atoms = torch.randint(0, 28, (2, 32))
+bonds = torch.randint(0, 4, (2, 32, 32))
+coors = torch.randn(2, 32, 3)
+mask  = torch.ones(2, 32).bool()
+
+refinement = model(atoms, coors, mask, edges = bonds, return_type = 1) # (2, 32, 32, 3)
 ```
 
 ## Caching

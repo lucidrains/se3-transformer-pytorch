@@ -160,7 +160,7 @@ class ConvSE3(nn.Module):
         self.kernel_unary = nn.ModuleDict()
 
         for (di, mi), (do, mo) in (self.fiber_in * self.fiber_out):
-            self.kernel_unary[f'({di},{do})'] = PairwiseConv(di, mi, do, mo)
+            self.kernel_unary[f'({di},{do})'] = PairwiseConv(di, mi, do, mo, edge_dim = edge_dim)
 
         self.pool = pool
 
@@ -177,7 +177,7 @@ class ConvSE3(nn.Module):
         rel_dist = None,
         basis = None
     ):
-        neighbor_indices, neighbor_masks = edge_info
+        neighbor_indices, neighbor_masks, edges = edge_info
         rel_dist = rearrange(rel_dist, 'b m n -> b m n ()')
 
         kernels = {}
@@ -186,7 +186,8 @@ class ConvSE3(nn.Module):
         for (di, mi), (do, mo) in (self.fiber_in * self.fiber_out):
             etype = f'({di},{do})'
             kernel_fn = self.kernel_unary[etype]
-            kernels[etype] = kernel_fn(rel_dist, basis = basis)
+            edge_features = torch.cat((rel_dist, edges), dim = -1) if exists(edges) else rel_dist
+            kernels[etype] = kernel_fn(edge_features, basis = basis)
         
         for degree_out in self.fiber_out.degrees:
             output = 0
@@ -222,7 +223,7 @@ class RadialFunc(nn.Module):
         num_freq,
         in_dim,
         out_dim,
-        edge_dim = 0,
+        edge_dim = None,
         mid_dim = 128
     ):
         super().__init__()
@@ -230,10 +231,10 @@ class RadialFunc(nn.Module):
         self.in_dim = in_dim
         self.mid_dim = mid_dim
         self.out_dim = out_dim
-        self.edge_dim = edge_dim
+        self.edge_dim = default(edge_dim, 0)
 
         self.net = nn.Sequential(
-            nn.Linear(edge_dim + 1, mid_dim),
+            nn.Linear(self.edge_dim + 1, mid_dim),
             nn.LayerNorm(mid_dim),
             nn.ReLU(),
             nn.Linear(mid_dim, mid_dim),
@@ -327,7 +328,8 @@ class AttentionSE3(nn.Module):
         fiber,
         dim_head = 64,
         heads = 8,
-        attend_self = False
+        attend_self = False,
+        edge_dim = None
     ):
         super().__init__()
         hidden_dim = dim_head * heads
@@ -336,8 +338,8 @@ class AttentionSE3(nn.Module):
         self.heads = heads
 
         self.to_q = LinearSE3(fiber, hidden_fiber)
-        self.to_k = ConvSE3(fiber, hidden_fiber, pool = False, self_interaction = False)
-        self.to_v = ConvSE3(fiber, hidden_fiber, pool = False, self_interaction = False)
+        self.to_k = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False)
+        self.to_v = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False)
         self.to_out = LinearSE3(hidden_fiber, fiber)
 
         self.null_keys = nn.ParameterDict()
@@ -357,7 +359,7 @@ class AttentionSE3(nn.Module):
     def forward(self, features, edge_info, rel_dist, basis):
         h, attend_self = self.heads, self.attend_self
         device, dtype = get_tensor_device_and_dtype(features)
-        neighbor_indices, neighbor_mask = edge_info
+        neighbor_indices, neighbor_mask, edges = edge_info
 
         max_neg_value = -torch.finfo().max
 
@@ -408,10 +410,11 @@ class AttentionBlockSE3(nn.Module):
         fiber,
         dim_head = 64,
         heads = 8,
-        attend_self = False
+        attend_self = False,
+        edge_dim = None
     ):
         super().__init__()
-        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self)
+        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim)
         self.prenorm = NormSE3(fiber)
         self.residual = ResidualSE3()
 
@@ -438,7 +441,9 @@ class SE3Transformer(nn.Module):
         output_degrees = 2,
         valid_radius = 1e5,
         reduce_dim_out = False,
-        num_tokens = None
+        num_tokens = None,
+        num_edge_tokens = None,
+        edge_dim = None,
     ):
         super().__init__()
         assert num_neighbors > 0, 'neighbors must be at least 1'
@@ -446,8 +451,10 @@ class SE3Transformer(nn.Module):
         self.valid_radius = valid_radius
 
         self.token_emb = None
-        if exists(num_tokens):
-            self.token_emb = nn.Embedding(num_tokens, dim)
+        self.token_emb = nn.Embedding(num_tokens, dim) if exists(num_tokens) else None
+
+        assert not (exists(num_edge_tokens) and not exists(edge_dim)), 'edge dimension (edge_dim) must be supplied if SE3 transformer is to have edge tokens'
+        self.edge_emb = nn.Embedding(num_edge_tokens, edge_dim) if exists(num_edge_tokens) else None
 
         self.input_degrees = input_degrees
         self.num_degrees = num_degrees
@@ -457,25 +464,30 @@ class SE3Transformer(nn.Module):
         fiber_hidden = Fiber.create(num_degrees, dim)
         fiber_out    = Fiber.create(output_degrees, dim)
 
-        self.conv_in  = ConvSE3(fiber_in, fiber_hidden)
+        self.conv_in  = ConvSE3(fiber_in, fiber_hidden, edge_dim = edge_dim)
 
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self),
+                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim),
                 FeedForwardBlockSE3(fiber_hidden)
             ]))
 
-        self.conv_out = ConvSE3(fiber_hidden, fiber_out)
+        self.conv_out = ConvSE3(fiber_hidden, fiber_out, edge_dim = edge_dim)
 
         self.linear_out = LinearSE3(
             fiber_out,
             Fiber.create(output_degrees, 1)
         ) if reduce_dim_out else None
 
-    def forward(self, feats, coors, mask = None, return_type = None):
+    def forward(self, feats, coors, mask = None, edges = None, return_type = None):
         if exists(self.token_emb):
             feats = self.token_emb(feats)
+
+        assert not (exists(edges) and not exists(self.edge_emb)), 'edge embedding (num_edge_tokens & edge_dim) must be supplied if one were to train on edge types'
+
+        if exists(edges):
+            edges = self.edge_emb(edges)
 
         if torch.is_tensor(feats):
             feats = {'0': feats[..., None]}
@@ -501,6 +513,9 @@ class SE3Transformer(nn.Module):
             mask = rearrange(mask, 'b i -> b i ()') * rearrange(mask, 'b j -> b () j')
             mask = mask.masked_select(exclude_self_mask).reshape(b, n, n - 1)
 
+        if exists(edges):
+            edges = edges.masked_select(exclude_self_mask[..., None]).reshape(b, n, n - 1, -1)
+
         rel_dist = rel_pos.norm(dim = -1)
 
         # get neighbors and neighbor mask, excluding self
@@ -516,9 +531,12 @@ class SE3Transformer(nn.Module):
         if exists(mask):
             neighbor_mask = neighbor_mask & batched_index_select(mask, nearest_indices, dim = 2)
 
+        if exists(edges):
+            edges = batched_index_select(edges, nearest_indices, dim = 2)
+
         # main logic
 
-        edge_info = (neighbor_indices, neighbor_mask)
+        edge_info = (neighbor_indices, neighbor_mask, edges)
         x = feats
 
         x = self.conv_in(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)

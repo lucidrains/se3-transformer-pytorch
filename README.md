@@ -111,9 +111,9 @@ from se3_transformer_pytorch import SE3Transformer
 
 model = SE3Transformer(
     num_tokens = 28,
-    num_edge_tokens = 4,
     dim = 64,
-    edge_dim = 16,
+    num_edge_tokens = 4,       # number of edge type, say 4 bond types
+    edge_dim = 16,             # dimension of edge embedding
     depth = 2,
     input_degrees = 1,
     num_degrees = 3,

@@ -502,7 +502,7 @@ class SE3Transformer(nn.Module):
 
         # exclude edge of token to itself
 
-        exclude_self_mask = rearrange(~torch.eye(n, dtype = torch.bool), 'i j -> () i j')
+        exclude_self_mask = rearrange(~torch.eye(n, dtype = torch.bool, device = device), 'i j -> () i j')
         indices = repeat(torch.arange(n, device = device), 'i -> b i j', b = b, j = n)
         rel_pos  = rearrange(coors, 'b n d -> b n () d') - rearrange(coors, 'b n d -> b () n d')
 

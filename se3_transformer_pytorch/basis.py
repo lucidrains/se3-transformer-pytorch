@@ -159,7 +159,7 @@ def get_basis(r_ij, max_degree):
     """
 
     # Relative positional encodings (vector)
-    device = r_ij.device
+    device, dtype = r_ij.device, r_ij.dtype
 
     r_ij = get_spherical_from_cartesian(r_ij)
 
@@ -173,7 +173,7 @@ def get_basis(r_ij, max_degree):
         for J in range(abs(d_in - d_out), d_in + d_out + 1):
             # Get spherical harmonic projection matrices
             Q_J = basis_transformation_Q_J(J, d_in, d_out)
-            Q_J = Q_J.float().to(device)
+            Q_J = Q_J.type(dtype).to(device)
 
             # Create kernel from spherical harmonics
             K_J = torch.matmul(Y[J], Q_J.T)

@@ -20,7 +20,7 @@ def test_transformer():
 def test_transformer_with_edges():
     model = SE3Transformer(
         dim = 64,
-        depth = 1,
+        depth = 2,
         num_degrees = 2,
         edge_dim = 4,
         num_edge_tokens = 4

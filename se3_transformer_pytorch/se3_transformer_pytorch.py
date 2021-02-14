@@ -329,7 +329,8 @@ class AttentionSE3(nn.Module):
         dim_head = 64,
         heads = 8,
         attend_self = False,
-        edge_dim = None
+        edge_dim = None,
+        use_null_kv = False
     ):
         super().__init__()
         hidden_dim = dim_head * heads
@@ -342,14 +343,16 @@ class AttentionSE3(nn.Module):
         self.to_v = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False)
         self.to_out = LinearSE3(hidden_fiber, fiber)
 
-        self.null_keys = nn.ParameterDict()
-        self.null_values = nn.ParameterDict()
+        self.use_null_kv = use_null_kv
+        if use_null_kv:
+            self.null_keys = nn.ParameterDict()
+            self.null_values = nn.ParameterDict()
 
-        for degree in fiber.degrees:
-            m = to_order(degree)
-            degree_key = str(degree)
-            self.null_keys[degree_key] = nn.Parameter(torch.zeros(heads, dim_head, m))
-            self.null_values[degree_key] = nn.Parameter(torch.zeros(heads, dim_head, m))
+            for degree in fiber.degrees:
+                m = to_order(degree)
+                degree_key = str(degree)
+                self.null_keys[degree_key] = nn.Parameter(torch.zeros(heads, dim_head, m))
+                self.null_values[degree_key] = nn.Parameter(torch.zeros(heads, dim_head, m))
 
         self.attend_self = attend_self
         if attend_self:
@@ -376,14 +379,16 @@ class AttentionSE3(nn.Module):
 
         outputs = {}
         for degree in features.keys():
-            q, k, v, null_k, null_v = map(lambda t: t[degree], (queries, keys, values, self.null_keys, self.null_values))
+            q, k, v = map(lambda t: t[degree], (queries, keys, values))
 
             q = rearrange(q, 'b i (h d) m -> b h i d m', h = h)
             k, v = map(lambda t: rearrange(t, 'b i j (h d) m -> b h i j d m', h = h), (k, v))
 
-            null_k, null_v = map(lambda t: repeat(t, 'h d m -> b h i () d m', b = q.shape[0], i = q.shape[2]), (null_k, null_v))
-            k = torch.cat((null_k, k), dim = 3)
-            v = torch.cat((null_v, v), dim = 3)
+            if self.use_null_kv:
+                null_k, null_v = map(lambda t: t[degree], (self.null_keys, self.null_values))
+                null_k, null_v = map(lambda t: repeat(t, 'h d m -> b h i () d m', b = q.shape[0], i = q.shape[2]), (null_k, null_v))
+                k = torch.cat((null_k, k), dim = 3)
+                v = torch.cat((null_v, v), dim = 3)
 
             if attend_self:
                 self_k, self_v = map(lambda t: t[degree], (self_keys, self_values))
@@ -394,7 +399,7 @@ class AttentionSE3(nn.Module):
             sim = einsum('b h i d m, b h i j d m -> b h i j', q, k) * self.scale
 
             if exists(neighbor_mask):
-                num_left_pad = 2 if attend_self else 1
+                num_left_pad = int(attend_self) + int(self.use_null_kv)
                 mask = F.pad(neighbor_mask, (num_left_pad, 0), value = True)
                 sim.masked_fill_(~mask, max_neg_value)
 
@@ -411,10 +416,11 @@ class AttentionBlockSE3(nn.Module):
         dim_head = 64,
         heads = 8,
         attend_self = False,
-        edge_dim = None
+        edge_dim = None,
+        use_null_kv = False
     ):
         super().__init__()
-        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim)
+        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv)
         self.prenorm = NormSE3(fiber)
         self.residual = ResidualSE3()
 
@@ -444,6 +450,7 @@ class SE3Transformer(nn.Module):
         num_tokens = None,
         num_edge_tokens = None,
         edge_dim = None,
+        use_null_kv = False
     ):
         super().__init__()
         assert num_neighbors > 0, 'neighbors must be at least 1'
@@ -469,7 +476,7 @@ class SE3Transformer(nn.Module):
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim),
+                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv),
                 FeedForwardBlockSE3(fiber_hidden)
             ]))
 

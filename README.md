@@ -133,6 +133,44 @@ mask  = torch.ones(2, 32).bool()
 pred = model(atoms, coors, mask, edges = bonds, return_type = 0) # (2, 32, 1)
 ```
 
+## Scaling (wip)
+
+This section will list ongoing efforts to make SE3 Transformer scale a little better.
+
+Firstly, I have added <a href="https://arxiv.org/abs/1707.04585">reversible networks</a>. This allows me to add a little more depth before hitting the usual memory roadblocks. Equivariance preservation is demonstrated in the tests.
+
+```python
+import torch
+from se3_transformer_pytorch import SE3Transformer
+
+model = SE3Transformer(
+    num_tokens = 20,
+    dim = 32,
+    dim_head = 32,
+    heads = 4,
+    depth = 12,             # 12 layers
+    input_degrees = 1,
+    num_degrees = 3,
+    output_degrees = 1,
+    reduce_dim_out = True,
+    reversible = True       # set reversible to True
+).cuda()
+
+atoms = torch.randint(0, 4, (2, 32)).cuda()
+coors = torch.randn(2, 32, 3).cuda()
+mask  = torch.ones(2, 32).bool().cuda()
+
+pred = model(atoms, coors, mask = mask, return_type = 0)
+
+loss = pred.sum()
+loss.backward()
+```
+
+Todo:
+
+- [ ] Test to see if Performer maintains equivariance https://arxiv.org/abs/2009.14794
+- [ ] Chunking kernel calculation from basis vectors
+
 ## Caching
 
 By default, the basis vectors are cached. However, if there is ever the need to clear the cache, you simply have to set the environmental flag `CLEAR_CACHE` to some value on initiating the script
@@ -167,5 +205,16 @@ This library is largely a port of <a href="https://github.com/FabianFuchsML/se3-
     eprint  = {2006.10503},
     archivePrefix = {arXiv},
     primaryClass = {cs.LG}
+}
+```
+
+```bibtex
+@misc{gomez2017reversible,
+    title     = {The Reversible Residual Network: Backpropagation Without Storing Activations},
+    author    = {Aidan N. Gomez and Mengye Ren and Raquel Urtasun and Roger B. Grosse},
+    year      = {2017},
+    eprint    = {1707.04585},
+    archivePrefix = {arXiv},
+    primaryClass = {cs.CV}
 }
 ```

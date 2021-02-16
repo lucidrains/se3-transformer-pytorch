@@ -53,7 +53,7 @@ atom_feats = torch.randn(2, 32, 64)
 coors = torch.randn(2, 32, 3)
 mask  = torch.ones(2, 32).bool()
 
-refinement = model(atom_feats, coors, mask, return_type = 1) # (2, 32, 3)
+refined_coors = coors + model(atom_feats, coors, mask, return_type = 1) # (2, 32, 3)
 ```
 
 You can also let the base transformer class take care of embedding the type 0 features being passed in. Assuming they are atoms
@@ -76,7 +76,7 @@ atoms = torch.randint(0, 28, (2, 32))
 coors = torch.randn(2, 32, 3)
 mask  = torch.ones(2, 32).bool()
 
-refinement = model(atoms, coors, mask, return_type = 1) # (2, 32, 3)
+refined_coors = coors + model(atoms, coors, mask, return_type = 1) # (2, 32, 3)
 ```
 
 If you think the net could further benefit from positional encoding, you can featurize your positions in space and pass it in as follows.
@@ -102,7 +102,7 @@ features = {'0': atom_feats, '1': coors_feats}
 coors = torch.randn(2, 32, 3)
 mask  = torch.ones(2, 32).bool()
 
-refinement = model(features, coors, mask, return_type = 1) # (2, 32, 3) - equivariant to input type 1 features and coordinates
+refined_coors = coors + model(features, coors, mask, return_type = 1) # (2, 32, 3) - equivariant to input type 1 features and coordinates
 ```
 
 ## Edges

@@ -8,6 +8,7 @@ from torch import nn, einsum
 
 from se3_transformer_pytorch.basis import get_basis
 from se3_transformer_pytorch.utils import exists, default, batched_index_select, masked_mean, to_order
+from se3_transformer_pytorch.reversible import ReversibleSequence, SequentialSequence
 
 from einops import rearrange, repeat
 
@@ -441,7 +442,6 @@ class SE3Transformer(nn.Module):
         heads = 8,
         dim_head = 64,
         depth = 2,
-        attend_self = False,
         num_degrees = 2,
         input_degrees = 1,
         output_degrees = 2,
@@ -450,6 +450,8 @@ class SE3Transformer(nn.Module):
         num_tokens = None,
         num_edge_tokens = None,
         edge_dim = None,
+        reversible = False,
+        attend_self = False,
         use_null_kv = False
     ):
         super().__init__()
@@ -473,12 +475,15 @@ class SE3Transformer(nn.Module):
 
         self.conv_in  = ConvSE3(fiber_in, fiber_hidden, edge_dim = edge_dim)
 
-        self.layers = nn.ModuleList([])
+        layers = nn.ModuleList([])
         for _ in range(depth):
-            self.layers.append(nn.ModuleList([
+            layers.append(nn.ModuleList([
                 AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv),
                 FeedForwardBlockSE3(fiber_hidden)
             ]))
+
+        execution_class = ReversibleSequence if reversible else SequentialSequence
+        self.net = execution_class(layers)
 
         self.conv_out = ConvSE3(fiber_hidden, fiber_out, edge_dim = edge_dim)
 
@@ -546,11 +551,15 @@ class SE3Transformer(nn.Module):
         edge_info = (neighbor_indices, neighbor_mask, edges)
         x = feats
 
+        # project in
+
         x = self.conv_in(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
 
-        for (attn, ff) in self.layers:
-            x = attn(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
-            x = ff(x)
+        # transformer layers
+
+        x = self.net(x, edge_info = edge_info, rel_dist = neighbor_rel_dist, basis = basis)
+
+        # project out
 
         x = self.conv_out(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
 

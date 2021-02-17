@@ -452,7 +452,8 @@ class SE3Transformer(nn.Module):
         edge_dim = None,
         reversible = False,
         attend_self = False,
-        use_null_kv = False
+        use_null_kv = False,
+        differentiable_coors = False
     ):
         super().__init__()
         assert num_neighbors > 0, 'neighbors must be at least 1'
@@ -493,6 +494,8 @@ class SE3Transformer(nn.Module):
             fiber_out,
             Fiber.create(output_degrees, 1)
         ) if reduce_dim_out else None
+
+        self.differentiable_coors = differentiable_coors
 
     def forward(self, feats, coors, mask = None, edges = None, return_type = None):
         if exists(self.token_emb):
@@ -538,7 +541,7 @@ class SE3Transformer(nn.Module):
         neighbor_rel_pos = batched_index_select(rel_pos, nearest_indices, dim = 2)
         neighbor_indices = batched_index_select(indices, nearest_indices, dim = 2)
 
-        basis = get_basis(neighbor_rel_pos, num_degrees - 1)
+        basis = get_basis(neighbor_rel_pos, num_degrees - 1, differentiable = self.differentiable_coors)
 
         neighbor_mask = neighbor_rel_dist <= self.valid_radius
 

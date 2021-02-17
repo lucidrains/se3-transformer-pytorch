@@ -4,6 +4,7 @@ import torch
 from torch import einsum
 from einops import rearrange
 from itertools import product
+from contextlib import contextmanager
 
 from se3_transformer_pytorch.irr_repr import irr_repr, spherical_harmonics
 from se3_transformer_pytorch.utils import torch_default_dtype, cache_dir, exists, to_order
@@ -22,6 +23,12 @@ RANDOM_ANGLES = [
     [2.16017393, 3.48835314, 5.55174441],
     [2.52385107, 0.2908958, 3.90040975]
 ]
+
+# helpers
+
+@contextmanager
+def null_context():
+    yield
 
 # functions
 
@@ -114,6 +121,7 @@ def sylvester_submatrix(order_out, order_in, J, a, b, c):
 
 @cache_dir(CACHE_PATH)
 @torch_default_dtype(torch.float64)
+@torch.no_grad()
 def basis_transformation_Q_J(J, order_in, order_out, random_angles = RANDOM_ANGLES):
     """
     :param J: order of the spherical harmonics
@@ -141,8 +149,7 @@ def precompute_sh(r_ij, max_J):
     clear_spherical_harmonics_cache()
     return Y_Js
 
-@torch.no_grad()
-def get_basis(r_ij, max_degree):
+def get_basis(r_ij, max_degree, differentiable = False):
     """Return equivariant weight basis (basis)
 
     Call this function *once* at the start of each forward pass of the model.
@@ -154,34 +161,44 @@ def get_basis(r_ij, max_degree):
     Args:
         r_ij: relative positional vectors
         max_degree: non-negative int for degree of highest feature-type
+        differentiable: whether r_ij should receive gradients from basis
     Returns:
         dict of equivariant bases, keys are in form '<d_in><d_out>'
     """
 
     # Relative positional encodings (vector)
+    context = null_context if not differentiable else torch.no_grad
+
     device, dtype = r_ij.device, r_ij.dtype
 
-    r_ij = get_spherical_from_cartesian(r_ij)
+    with context():
+        r_ij = get_spherical_from_cartesian(r_ij)
 
-    # Spherical harmonic basis
-    Y = precompute_sh(r_ij, 2 * max_degree)
+        # Spherical harmonic basis
+        Y = precompute_sh(r_ij, 2 * max_degree)
 
-    # Equivariant basis (dict['d_in><d_out>'])
-    basis = {}
-    for d_in, d_out in product(range(max_degree+1), range(max_degree+1)):
-        K_Js = []
-        for J in range(abs(d_in - d_out), d_in + d_out + 1):
-            # Get spherical harmonic projection matrices
-            Q_J = basis_transformation_Q_J(J, d_in, d_out)
-            Q_J = Q_J.type(dtype).to(device)
+        # Equivariant basis (dict['d_in><d_out>'])
 
-            # Create kernel from spherical harmonics
-            K_J = torch.matmul(Y[J], Q_J.T)
-            K_Js.append(K_J)
+        basis = {}
+        for d_in, d_out in product(range(max_degree+1), range(max_degree+1)):
+            K_Js = []
+            for J in range(abs(d_in - d_out), d_in + d_out + 1):
+                # Get spherical harmonic projection matrices
+                Q_J = basis_transformation_Q_J(J, d_in, d_out)
+                Q_J = Q_J.type(dtype).to(device)
 
-        # Reshape so can take linear combinations with a dot product
-        K_Js = torch.stack(K_Js, dim = -1)
-        size = (*r_ij.shape[:-1], 1, to_order(d_out), 1, to_order(d_in), to_order(min(d_in,d_out)))
-        basis[f'{d_in},{d_out}'] = K_Js.view(*size)
+                # Create kernel from spherical harmonics
+                K_J = torch.matmul(Y[J], Q_J.T)
+                K_Js.append(K_J)
+
+            # Reshape so can take linear combinations with a dot product
+            K_Js = torch.stack(K_Js, dim = -1)
+            size = (*r_ij.shape[:-1], 1, to_order(d_out), 1, to_order(d_in), to_order(min(d_in,d_out)))
+            basis[f'{d_in},{d_out}'] = K_Js.view(*size)
+
+    # extra detach for safe measure
+    if not differentiable:
+        for k, v in basis.items():
+            basis[k] = v.detach()
 
     return basis

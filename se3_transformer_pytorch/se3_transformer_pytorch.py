@@ -487,6 +487,8 @@ class SE3Transformer(nn.Module):
 
         self.conv_out = ConvSE3(fiber_hidden, fiber_out, edge_dim = edge_dim)
 
+        self.norm = NormSE3(fiber_out)
+
         self.linear_out = LinearSE3(
             fiber_out,
             Fiber.create(output_degrees, 1)
@@ -562,6 +564,12 @@ class SE3Transformer(nn.Module):
         # project out
 
         x = self.conv_out(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
+
+        # norm
+
+        x = self.norm(x)
+
+        # reduce dim if specified
 
         if exists(self.linear_out):
             x = self.linear_out(x)

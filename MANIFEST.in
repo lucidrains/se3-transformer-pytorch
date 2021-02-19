@@ -1,1 +1,2 @@
 include se3_transformer_pytorch/data/J_dense.pt
+include se3_transformer_pytorch/data/J_dense.npy

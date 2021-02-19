@@ -1,4 +1,5 @@
 import os
+import numpy as np
 import torch
 from torch import sin, cos, atan2, acos
 from math import pi
@@ -8,8 +9,15 @@ from functools import wraps
 from se3_transformer_pytorch.utils import exists, default, cast_torch_tensor, to_order
 from se3_transformer_pytorch.spherical_harmonics import get_spherical_harmonics, clear_spherical_harmonics_cache
 
-path = Path(os.path.dirname(__file__)) / 'data' / 'J_dense.pt'
-Jd = torch.load(str(path))
+DATA_PATH = path = Path(os.path.dirname(__file__)) / 'data'
+
+try:
+    path = DATA_PATH / 'J_dense.pt'
+    Jd = torch.load(str(path))
+except:
+    path = DATA_PATH / 'J_dense.npy'
+    Jd_np = np.load(str(path), allow_pickle = True)
+    Jd = list(map(torch.from_numpy, Jd_np))
 
 def wigner_d_matrix(degree, alpha, beta, gamma, dtype = None, device = None):
     """Create wigner D matrices for batch of ZYZ Euler anglers for degree l."""

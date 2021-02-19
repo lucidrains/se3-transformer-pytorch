@@ -4,7 +4,7 @@ setup(
   name = 'se3-transformer-pytorch',
   packages = find_packages(),
   include_package_data = True,
-  version = '0.0.19',
+  version = '0.0.20',
   license='MIT',
   description = 'SE3 Transformer - Pytorch',
   author = 'Phil Wang',
@@ -20,6 +20,7 @@ setup(
   install_requires=[
     'einops>=0.3',
     'filelock',
+    'numpy',
     'torch>=1.6'
   ],
   setup_requires=[

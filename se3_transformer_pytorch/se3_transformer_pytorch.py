@@ -451,7 +451,7 @@ class SE3Transformer(nn.Module):
         num_edge_tokens = None,
         edge_dim = None,
         reversible = False,
-        attend_self = False,
+        attend_self = True,
         use_null_kv = False,
         differentiable_coors = False
     ):

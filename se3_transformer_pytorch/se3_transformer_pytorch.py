@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import nn, einsum
 
 from se3_transformer_pytorch.basis import get_basis
-from se3_transformer_pytorch.utils import exists, default, batched_index_select, masked_mean, to_order
+from se3_transformer_pytorch.utils import exists, default, uniq, batched_index_select, masked_mean, to_order
 from se3_transformer_pytorch.reversible import ReversibleSequence, SequentialSequence
 
 from einops import rearrange, repeat
@@ -25,6 +25,10 @@ class Fiber(nn.Module):
         if isinstance(structure, dict):
             structure = structure.items()
         self.structure = structure
+
+    @property
+    def dims(self):
+        return uniq(map(lambda t: t[1], self.structure))
 
     @property
     def degrees(self):
@@ -336,13 +340,15 @@ class AttentionSE3(nn.Module):
         super().__init__()
         hidden_dim = dim_head * heads
         hidden_fiber = Fiber(list(map(lambda t: (t[0], hidden_dim), fiber)))
+        project_out = not (heads == 1 and len(fiber.dims) == 1 and dim_head == fiber.dims[0])
+
         self.scale = dim_head ** -0.5
         self.heads = heads
 
         self.to_q = LinearSE3(fiber, hidden_fiber)
         self.to_k = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False)
         self.to_v = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False)
-        self.to_out = LinearSE3(hidden_fiber, fiber)
+        self.to_out = LinearSE3(hidden_fiber, fiber) if project_out else nn.Identity()
 
         self.use_null_kv = use_null_kv
         if use_null_kv:

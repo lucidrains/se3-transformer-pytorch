@@ -16,6 +16,9 @@ def exists(val):
 def default(val, d):
     return val if exists(val) else d
 
+def uniq(arr):
+    return list({el: True for el in arr}.keys())
+
 def to_order(degree):
     return 2 * degree + 1
 

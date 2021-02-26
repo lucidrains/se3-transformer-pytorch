@@ -40,7 +40,8 @@ def test_equivariance():
         depth = 2,
         attend_self = True,
         num_degrees = 2,
-        output_degrees = 2
+        output_degrees = 2,
+        fourier_encode_dist = True
     )
 
     feats = torch.randn(1, 32, 64)

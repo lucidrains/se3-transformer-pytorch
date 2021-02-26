@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import nn, einsum
 
 from se3_transformer_pytorch.basis import get_basis
-from se3_transformer_pytorch.utils import exists, default, uniq, batched_index_select, masked_mean, to_order
+from se3_transformer_pytorch.utils import exists, default, uniq, batched_index_select, masked_mean, to_order, fourier_encode_dist
 from se3_transformer_pytorch.reversible import ReversibleSequence, SequentialSequence
 
 from einops import rearrange, repeat
@@ -153,7 +153,8 @@ class ConvSE3(nn.Module):
         fiber_out,
         self_interaction = True,
         pool = True,
-        edge_dim = 0
+        edge_dim = 0,
+        fourier_encode_dist = False
     ):
         super().__init__()
         self.fiber_in = fiber_in
@@ -165,7 +166,7 @@ class ConvSE3(nn.Module):
         self.kernel_unary = nn.ModuleDict()
 
         for (di, mi), (do, mo) in (self.fiber_in * self.fiber_out):
-            self.kernel_unary[f'({di},{do})'] = PairwiseConv(di, mi, do, mo, edge_dim = edge_dim)
+            self.kernel_unary[f'({di},{do})'] = PairwiseConv(di, mi, do, mo, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist)
 
         self.pool = pool
 
@@ -229,6 +230,8 @@ class RadialFunc(nn.Module):
         in_dim,
         out_dim,
         edge_dim = None,
+        fourier_encode_dist = False,
+        num_fourier_features = 4,
         mid_dim = 128
     ):
         super().__init__()
@@ -238,8 +241,13 @@ class RadialFunc(nn.Module):
         self.out_dim = out_dim
         self.edge_dim = default(edge_dim, 0)
 
+        self.fourier_encode_dist = fourier_encode_dist
+        self.num_fourier_features = num_fourier_features if fourier_encode_dist else 0
+
+        input_dim = self.edge_dim + 1 + (self.num_fourier_features * 2)
+
         self.net = nn.Sequential(
-            nn.Linear(self.edge_dim + 1, mid_dim),
+            nn.Linear(input_dim, mid_dim),
             nn.LayerNorm(mid_dim),
             nn.ReLU(),
             nn.Linear(mid_dim, mid_dim),
@@ -255,6 +263,10 @@ class RadialFunc(nn.Module):
             nn.init.kaiming_uniform_(m.weight)
 
     def forward(self, x):
+        if self.fourier_encode_dist:
+            x = fourier_encode_dist(x, num_encodings = self.num_fourier_features)
+            x = rearrange(x, 'b n m () d -> b n m d')
+
         y = self.net(x)
         return rearrange(y, '... (o i f) -> ... o () i () f', i = self.in_dim, o = self.out_dim)
 
@@ -266,7 +278,8 @@ class PairwiseConv(nn.Module):
         nc_in,
         degree_out,
         nc_out,
-        edge_dim = 0
+        edge_dim = 0,
+        fourier_encode_dist = False
     ):
         super().__init__()
         self.degree_in = degree_in
@@ -278,7 +291,7 @@ class PairwiseConv(nn.Module):
         self.d_out = to_order(degree_out)
         self.edge_dim = edge_dim
 
-        self.rp = RadialFunc(self.num_freq, nc_in, nc_out, edge_dim)
+        self.rp = RadialFunc(self.num_freq, nc_in, nc_out, edge_dim, fourier_encode_dist)
 
     def forward(self, feat, basis):
         R = self.rp(feat)
@@ -335,6 +348,7 @@ class AttentionSE3(nn.Module):
         heads = 8,
         attend_self = False,
         edge_dim = None,
+        fourier_encode_dist = False,
         use_null_kv = False
     ):
         super().__init__()
@@ -346,8 +360,8 @@ class AttentionSE3(nn.Module):
         self.heads = heads
 
         self.to_q = LinearSE3(fiber, hidden_fiber)
-        self.to_k = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False)
-        self.to_v = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False)
+        self.to_k = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist)
+        self.to_v = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist)
         self.to_out = LinearSE3(hidden_fiber, fiber) if project_out else nn.Identity()
 
         self.use_null_kv = use_null_kv
@@ -424,7 +438,8 @@ class AttentionBlockSE3(nn.Module):
         heads = 8,
         attend_self = False,
         edge_dim = None,
-        use_null_kv = False
+        use_null_kv = False,
+        fourier_encode_dist = False
     ):
         super().__init__()
         self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv)
@@ -459,7 +474,8 @@ class SE3Transformer(nn.Module):
         reversible = False,
         attend_self = True,
         use_null_kv = False,
-        differentiable_coors = False
+        differentiable_coors = False,
+        fourier_encode_dist = False
     ):
         super().__init__()
         assert num_neighbors > 0, 'neighbors must be at least 1'
@@ -480,19 +496,19 @@ class SE3Transformer(nn.Module):
         fiber_hidden = Fiber.create(num_degrees, dim)
         fiber_out    = Fiber.create(output_degrees, dim)
 
-        self.conv_in  = ConvSE3(fiber_in, fiber_hidden, edge_dim = edge_dim)
+        self.conv_in  = ConvSE3(fiber_in, fiber_hidden, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist)
 
         layers = nn.ModuleList([])
         for _ in range(depth):
             layers.append(nn.ModuleList([
-                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv),
+                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, use_null_kv = use_null_kv),
                 FeedForwardBlockSE3(fiber_hidden)
             ]))
 
         execution_class = ReversibleSequence if reversible else SequentialSequence
         self.net = execution_class(layers)
 
-        self.conv_out = ConvSE3(fiber_hidden, fiber_out, edge_dim = edge_dim)
+        self.conv_out = ConvSE3(fiber_hidden, fiber_out, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist)
 
         self.norm = NormSE3(fiber_out)
 

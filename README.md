@@ -170,7 +170,7 @@ Todo:
 
 - [ ] Test to see if Performer maintains equivariance https://arxiv.org/abs/2009.14794
 - [ ] Chunking kernel calculation from basis vectors
-- [ ] When on float32, occasionally one would see breaking of equivariance. Figure out the root cause and see if only that part of the computation can be moved to float64 and back
+- [ ] When on float32, occasionally one would see breaking of equivariance. Figure out the root cause and see if only that part of the computation can be moved to float64 and back <a href="https://github.com/lucidrains/se3-transformer-pytorch/issues/3">issue link</a>
 
 ## Caching
 

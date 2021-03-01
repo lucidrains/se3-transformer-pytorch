@@ -46,7 +46,8 @@ model = SE3Transformer(
     input_degrees = 1,
     num_degrees = 2,
     output_degrees = 2,
-    reduce_dim_out = True
+    reduce_dim_out = True,
+    differentiable_coors = True
 )
 
 atom_feats = torch.randn(2, 32, 64)

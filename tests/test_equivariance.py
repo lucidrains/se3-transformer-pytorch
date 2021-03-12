@@ -15,7 +15,7 @@ def test_transformer():
     mask  = torch.ones(1, 32).bool()
 
     out = model(feats, coors, mask, return_type = 0)
-    assert out.shape == (1, 32, 64, 1), 'output must be of the right shape'
+    assert out.shape == (1, 32, 64), 'output must be of the right shape'
 
 def test_transformer_with_edges():
     model = SE3Transformer(
@@ -32,7 +32,7 @@ def test_transformer_with_edges():
     mask  = torch.ones(1, 32).bool()
 
     out = model(feats, coors, mask, edges = edges, return_type = 0)
-    assert out.shape == (1, 32, 64, 1), 'output must be of the right shape'
+    assert out.shape == (1, 32, 64), 'output must be of the right shape'
 
 def test_equivariance():
     model = SE3Transformer(

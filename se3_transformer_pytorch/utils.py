@@ -42,7 +42,11 @@ def masked_mean(tensor, mask, dim = -1):
     diff_len = len(tensor.shape) - len(mask.shape)
     mask = mask[(..., *((None,) * diff_len))]
     tensor.masked_fill_(~mask, 0.)
-    return tensor.sum(dim = dim) / mask.sum(dim = dim)
+
+    total_el = mask.sum(dim = dim)
+    mean = tensor.sum(dim = dim) / total_el.clamp(min = 1.)
+    mean.masked_fill_(total_el == 0, 0.)
+    return mean
 
 def fourier_encode_dist(x, num_encodings = 4, include_self = True):
     x = x.unsqueeze(-1)

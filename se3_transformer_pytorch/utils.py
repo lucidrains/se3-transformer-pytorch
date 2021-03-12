@@ -22,6 +22,9 @@ def uniq(arr):
 def to_order(degree):
     return 2 * degree + 1
 
+def map_values(fn, d):
+    return {k: fn(v) for k, v in d.items()}
+
 def batched_index_select(values, indices, dim = 1):
     value_dims = values.shape[(dim + 1):]
     values_shape, indices_shape = map(lambda t: list(t.shape), (values, indices))

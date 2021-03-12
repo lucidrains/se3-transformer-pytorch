@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import nn, einsum
 
 from se3_transformer_pytorch.basis import get_basis
-from se3_transformer_pytorch.utils import exists, default, uniq, batched_index_select, masked_mean, to_order, fourier_encode_dist
+from se3_transformer_pytorch.utils import exists, default, uniq, map_values, batched_index_select, masked_mean, to_order, fourier_encode_dist
 from se3_transformer_pytorch.reversible import ReversibleSequence, SequentialSequence
 
 from einops import rearrange, repeat
@@ -463,9 +463,9 @@ class SE3Transformer(nn.Module):
         heads = 8,
         dim_head = 64,
         depth = 2,
-        num_degrees = 2,
         input_degrees = 1,
-        output_degrees = 2,
+        num_degrees = 2,
+        output_degrees = 1,
         valid_radius = 1e5,
         reduce_dim_out = False,
         num_tokens = None,
@@ -490,6 +490,7 @@ class SE3Transformer(nn.Module):
 
         self.input_degrees = input_degrees
         self.num_degrees = num_degrees
+        self.output_degrees = output_degrees
         self.num_neighbors = num_neighbors
 
         fiber_in     = Fiber.create(input_degrees, dim)
@@ -519,7 +520,12 @@ class SE3Transformer(nn.Module):
 
         self.differentiable_coors = differentiable_coors
 
-    def forward(self, feats, coors, mask = None, edges = None, return_type = None):
+    def forward(self, feats, coors, mask = None, edges = None, return_type = None, return_pooled = False):
+        _mask = mask
+
+        if self.output_degrees == 1:
+            return_type = 0
+
         if exists(self.token_emb):
             feats = self.token_emb(feats)
 
@@ -598,7 +604,14 @@ class SE3Transformer(nn.Module):
 
         if exists(self.linear_out):
             x = self.linear_out(x)
-            x = {k: v.squeeze(dim = 2) for k, v in x.items()}
+            x = map_values(lambda t: t.squeeze(dim = 2), x)
+
+        if return_pooled:
+            mask_fn = (lambda t: masked_mean(t, _mask, dim = 1)) if exists(_mask) else (lambda t: t.mean(dim = 1))
+            x = map_values(mask_fn, x)
+
+        if '0' in x:
+            x['0'] = x['0'].squeeze(dim = -1)
 
         if exists(return_type):
             return x[str(return_type)]

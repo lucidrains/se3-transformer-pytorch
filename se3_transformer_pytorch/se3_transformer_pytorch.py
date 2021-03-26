@@ -542,7 +542,7 @@ class SE3Transformer(nn.Module):
         if exists(self.token_emb):
             feats = self.token_emb(feats)
 
-        assert not (self.attend_sparse_neighbors ^ (exists(adj_mat) or exists(edges))), 'adjacency matrix (adjacency_mat) or edges (edges) must be passed in'
+        assert not (self.attend_sparse_neighbors and not (exists(adj_mat) or exists(edges))), 'adjacency matrix (adjacency_mat) or edges (edges) must be passed in'
         assert not (exists(edges) and not exists(self.edge_emb)), 'edge embedding (num_edge_tokens & edge_dim) must be supplied if one were to train on edge types'
 
         if torch.is_tensor(feats):
@@ -616,6 +616,7 @@ class SE3Transformer(nn.Module):
 
         # get neighbors and neighbor mask, excluding self
 
+        neighbors = int(min(neighbors, n - 1))
         total_neighbors = int(neighbors + num_sparse_neighbors)
         assert total_neighbors > 0, 'you must be fetching at least 1 neighbor'
 

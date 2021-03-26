@@ -542,11 +542,8 @@ class SE3Transformer(nn.Module):
         if exists(self.token_emb):
             feats = self.token_emb(feats)
 
-        assert not self.attend_sparse_neighbors or exists(adj_mat) or exists(edges), 'adjacency matrix (adjacency_mat) or edges (edges) must be passed in'
+        assert not (self.attend_sparse_neighbors ^ (exists(adj_mat) or exists(edges))), 'adjacency matrix (adjacency_mat) or edges (edges) must be passed in'
         assert not (exists(edges) and not exists(self.edge_emb)), 'edge embedding (num_edge_tokens & edge_dim) must be supplied if one were to train on edge types'
-
-        if exists(edges):
-            edges = self.edge_emb(edges)
 
         if torch.is_tensor(feats):
             feats = {'0': feats[..., None]}
@@ -557,7 +554,6 @@ class SE3Transformer(nn.Module):
         assert set(map(int, feats.keys())) == set(range(self.input_degrees)), f'input must have {self.input_degrees} degree'
 
         num_degrees, neighbors, max_sparse_neighbors, valid_radius = self.num_degrees, self.num_neighbors, self.max_sparse_neighbors, self.valid_radius
-        neighbors = int(min(neighbors, n - 1))
 
         assert self.attend_sparse_neighbors or neighbors > 0, 'you must either attend to sparsely bonded neighbors, or set number of locally attended neighbors to be greater than 0'
 
@@ -568,9 +564,12 @@ class SE3Transformer(nn.Module):
         sparse_neighbor_mask = None
         num_sparse_neighbors = 0
 
-        if exists(adj_mat):
-            if len(adj_mat) == 2:
-                adj_mat = repeat(adj_mat, 'i j -> b i j', b = b)
+        if self.attend_sparse_neighbors:
+            if exists(adj_mat):
+                if len(adj_mat) == 2:
+                    adj_mat = repeat(adj_mat, 'i j -> b i j', b = b)
+            elif exists(edges):
+                adj_mat = edges > 0
 
             adj_mat = adj_mat.masked_select(exclude_self_mask).reshape(b, n, n -1)
 
@@ -599,6 +598,7 @@ class SE3Transformer(nn.Module):
             mask = mask.masked_select(exclude_self_mask).reshape(b, n, n - 1)
 
         if exists(edges):
+            edges = self.edge_emb(edges)
             edges = edges.masked_select(exclude_self_mask[..., None]).reshape(b, n, n - 1, -1)
 
         rel_dist = rel_pos.norm(dim = -1)
@@ -617,8 +617,9 @@ class SE3Transformer(nn.Module):
         # get neighbors and neighbor mask, excluding self
 
         total_neighbors = int(neighbors + num_sparse_neighbors)
-
         assert total_neighbors > 0, 'you must be fetching at least 1 neighbor'
+
+        total_neighbors = int(min(total_neighbors, n - 1)) # make sure total neighbors does not exceed the length of the sequence itself
 
         dist_values, nearest_indices = modified_rel_dist.topk(total_neighbors, dim = -1, largest = False)
         neighbor_mask = dist_values <= valid_radius

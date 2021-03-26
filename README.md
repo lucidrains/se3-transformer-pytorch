@@ -166,6 +166,32 @@ adj_mat = (i[:, None] <= (i[None, :] + 1)) & (i[:, None] >= (i[None, :] - 1))
 out = model(feats, coors, mask, adj_mat = adj_mat) # (1, 128, 512)
 ```
 
+If you had been passing in the edges, as long as you assume that an edge index of `0` indicates no connectivity, it will automatically derive the adjacency matrix for you and include it.
+
+```python
+import torch
+from se3_transformer_pytorch.se3_transformer_pytorch import SE3Transformer
+
+model = SE3Transformer(
+    dim = 64,
+    depth = 1,
+    attend_self = True,
+    num_degrees = 2,
+    output_degrees = 2,
+    num_edge_tokens = 4,
+    edge_dim = 2,
+    num_neighbors = 0,
+    attend_sparse_neighbors = True
+)
+
+feats = torch.randn(1, 32, 64)
+coors = torch.randn(1, 32, 3)
+mask  = torch.ones(1, 32).bool()
+bonds = torch.randint(0, 4, (1, 32, 32))
+
+out = model(feats, coors, mask, edges = bonds, return_type = 1)
+```
+
 ## Scaling (wip)
 
 This section will list ongoing efforts to make SE3 Transformer scale a little better.

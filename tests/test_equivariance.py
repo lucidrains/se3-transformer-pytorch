@@ -1,6 +1,7 @@
 import torch
 from se3_transformer_pytorch.se3_transformer_pytorch import SE3Transformer
 from se3_transformer_pytorch.irr_repr import rot
+from se3_transformer_pytorch.utils import torch_default_dtype
 
 def test_transformer():
     model = SE3Transformer(
@@ -55,7 +56,34 @@ def test_equivariance():
     diff = (out1 - out2).max()
     assert diff < 1e-4, 'is not equivariant'
 
-def test_equivariance_with_reversibile_network():
+@torch_default_dtype(torch.float64)
+def test_equivariance_only_sparse_neighbors():
+    model = SE3Transformer(
+        dim = 64,
+        depth = 2,
+        attend_self = True,
+        num_degrees = 2,
+        output_degrees = 2,
+        num_neighbors = 0,
+        attend_sparse_neighbors = True
+    )
+
+    feats = torch.randn(1, 32, 64)
+    coors = torch.randn(1, 32, 3)
+    mask  = torch.ones(1, 32).bool()
+
+    seq = torch.arange(32)
+    adj_mat = (seq[:, None] >= (seq[None, :] - 1)) & (seq[:, None] <= (seq[None, :] + 1))
+    adj_mat = (adj_mat.float() @ adj_mat.float()) > 0
+
+    R   = rot(15, 0, 45)
+    out1 = model(feats, coors @ R, mask, adj_mat = adj_mat, return_type = 1)
+    out2 = model(feats, coors, mask, adj_mat = adj_mat, return_type = 1) @ R
+
+    diff = (out1 - out2).max()
+    assert diff < 1e-4, 'is not equivariant'
+
+def test_equivariance_with_reversible_network():
     model = SE3Transformer(
         dim = 64,
         depth = 2,

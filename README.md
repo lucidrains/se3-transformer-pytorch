@@ -134,6 +134,38 @@ mask  = torch.ones(2, 32).bool()
 pred = model(atoms, coors, mask, edges = bonds, return_type = 0) # (2, 32, 1)
 ```
 
+## Sparse Neighbors
+
+If you know the connectivity of your points (say you are working with molecules), you can pass in an adjacency matrix, in the form of a boolean mask (where `True` indicates connectivity).
+
+```python
+import torch
+from se3_transformer_pytorch import SE3Transformer
+
+model = SE3Transformer(
+    dim = 32,
+    heads = 8,
+    depth = 1,
+    dim_head = 64,
+    num_degrees = 2,
+    valid_radius = 10,
+    attend_sparse_neighbors = True,  # this must be set to true, in which case it will assert that you pass in the adjacency matrix
+    num_neighbors = 0                # if you set this to 0, it will only consider the connected neighbors as defined by the adjacency matrix. but if you set a value greater than 0, it will continue to fetch the closest points up to this many, excluding the ones already specified by the adjacency matrix
+)
+
+feats = torch.randn(1, 128, 32)
+coors = torch.randn(1, 128, 3)
+mask  = torch.ones(1, 128).bool()
+
+# placeholder adjacency matrix
+# naively assuming the sequence is one long chain (128, 128)
+
+i = torch.arange(128)
+adj_mat = (i[:, None] <= (i[None, :] + 1)) & (i[:, None] >= (i[None, :] - 1))
+
+out = model(feats, coors, mask, adj_mat = adj_mat) # (1, 128, 512)
+```
+
 ## Scaling (wip)
 
 This section will list ongoing efforts to make SE3 Transformer scale a little better.

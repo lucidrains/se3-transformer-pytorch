@@ -459,7 +459,6 @@ class SE3Transformer(nn.Module):
         self,
         *,
         dim,
-        num_neighbors = 12,
         heads = 8,
         dim_head = 64,
         depth = 2,
@@ -475,12 +474,13 @@ class SE3Transformer(nn.Module):
         attend_self = True,
         use_null_kv = False,
         differentiable_coors = False,
-        fourier_encode_dist = False
+        fourier_encode_dist = False,
+        num_neighbors = float('inf'),
+        attend_sparse_neighbors = False,
+        max_sparse_neighbors = float('inf')
     ):
         super().__init__()
-        assert num_neighbors > 0, 'neighbors must be at least 1'
         self.dim = dim
-        self.valid_radius = valid_radius
 
         self.token_emb = None
         self.token_emb = nn.Embedding(num_tokens, dim) if exists(num_tokens) else None
@@ -491,7 +491,22 @@ class SE3Transformer(nn.Module):
         self.input_degrees = input_degrees
         self.num_degrees = num_degrees
         self.output_degrees = output_degrees
+
+        # whether to differentiate through basis, needed for alphafold2
+
+        self.differentiable_coors = differentiable_coors
+
+        # neighbors hyperparameters
+
+        self.valid_radius = valid_radius
         self.num_neighbors = num_neighbors
+
+        # sparse neighbors, derived from adjacency matrix or edges being passed in
+
+        self.attend_sparse_neighbors = attend_sparse_neighbors
+        self.max_sparse_neighbors = max_sparse_neighbors
+
+        # main network
 
         fiber_in     = Fiber.create(input_degrees, dim)
         fiber_hidden = Fiber.create(num_degrees, dim)
@@ -518,9 +533,7 @@ class SE3Transformer(nn.Module):
             Fiber.create(output_degrees, 1)
         ) if reduce_dim_out else None
 
-        self.differentiable_coors = differentiable_coors
-
-    def forward(self, feats, coors, mask = None, edges = None, return_type = None, return_pooled = False):
+    def forward(self, feats, coors, mask = None, adj_mat = None, edges = None, return_type = None, return_pooled = False):
         _mask = mask
 
         if self.output_degrees == 1:
@@ -529,6 +542,7 @@ class SE3Transformer(nn.Module):
         if exists(self.token_emb):
             feats = self.token_emb(feats)
 
+        assert not self.attend_sparse_neighbors or exists(adj_mat) or exists(edges), 'adjacency matrix (adjacency_mat) or edges (edges) must be passed in'
         assert not (exists(edges) and not exists(self.edge_emb)), 'edge embedding (num_edge_tokens & edge_dim) must be supplied if one were to train on edge types'
 
         if exists(edges):
@@ -542,12 +556,38 @@ class SE3Transformer(nn.Module):
         assert d == self.dim, f'feature dimension {d} must be equal to dimension given at init {self.dim}'
         assert set(map(int, feats.keys())) == set(range(self.input_degrees)), f'input must have {self.input_degrees} degree'
 
-        num_degrees, neighbors = self.num_degrees, self.num_neighbors
-        neighbors = min(neighbors, n - 1)
+        num_degrees, neighbors, max_sparse_neighbors, valid_radius = self.num_degrees, self.num_neighbors, self.max_sparse_neighbors, self.valid_radius
+        neighbors = int(min(neighbors, n - 1))
+
+        assert self.attend_sparse_neighbors or neighbors > 0, 'you must either attend to sparsely bonded neighbors, or set number of locally attended neighbors to be greater than 0'
+
+        exclude_self_mask = rearrange(~torch.eye(n, dtype = torch.bool, device = device), 'i j -> () i j')
+
+        # calculate sparsely connected neighbors
+
+        sparse_neighbor_mask = None
+        num_sparse_neighbors = 0
+
+        if exists(adj_mat):
+            if len(adj_mat) == 2:
+                adj_mat = repeat(adj_mat, 'i j -> b i j', b = b)
+
+            adj_mat = adj_mat.masked_select(exclude_self_mask).reshape(b, n, n -1)
+
+            adj_mat_values = adj_mat.float()
+            adj_mat_max_neighbors = adj_mat_values.sum(dim = -1).max().item()
+
+            if max_sparse_neighbors < adj_mat_max_neighbors:
+                noise = torch.empty_like(adj_mat_values).uniform_(-0.01, 0.01)
+                adj_mat_values += noise
+
+            num_sparse_neighbors = int(min(max_sparse_neighbors, adj_mat_max_neighbors))
+            values, indices = adj_mat_values.topk(num_sparse_neighbors, dim = -1)
+            sparse_neighbor_mask = torch.zeros_like(adj_mat_values).scatter_(-1, indices, values)
+            sparse_neighbor_mask = sparse_neighbor_mask > 0.5
 
         # exclude edge of token to itself
 
-        exclude_self_mask = rearrange(~torch.eye(n, dtype = torch.bool, device = device), 'i j -> () i j')
         indices = repeat(torch.arange(n, device = device), 'i -> b i j', b = b, j = n)
         rel_pos  = rearrange(coors, 'b n d -> b n () d') - rearrange(coors, 'b n d -> b () n d')
 
@@ -563,21 +603,39 @@ class SE3Transformer(nn.Module):
 
         rel_dist = rel_pos.norm(dim = -1)
 
+        # use sparse neighbor mask to assign priority of bonded
+
+        modified_rel_dist = rel_dist
+        if exists(sparse_neighbor_mask):
+            modified_rel_dist.masked_fill_(sparse_neighbor_mask, 0.)
+
+        # if number of local neighbors by distance is set to 0, then only fetch the sparse neighbors defined by adjacency matrix
+
+        if neighbors == 0:
+            valid_radius = 0
+
         # get neighbors and neighbor mask, excluding self
 
-        neighbor_rel_dist, nearest_indices = rel_dist.topk(neighbors, dim = -1, largest = False)
+        total_neighbors = int(neighbors + num_sparse_neighbors)
+
+        assert total_neighbors > 0, 'you must be fetching at least 1 neighbor'
+
+        dist_values, nearest_indices = modified_rel_dist.topk(total_neighbors, dim = -1, largest = False)
+        neighbor_mask = dist_values <= valid_radius
+
+        neighbor_rel_dist = batched_index_select(rel_dist, nearest_indices, dim = 2)
         neighbor_rel_pos = batched_index_select(rel_pos, nearest_indices, dim = 2)
         neighbor_indices = batched_index_select(indices, nearest_indices, dim = 2)
-
-        basis = get_basis(neighbor_rel_pos, num_degrees - 1, differentiable = self.differentiable_coors)
-
-        neighbor_mask = neighbor_rel_dist <= self.valid_radius
 
         if exists(mask):
             neighbor_mask = neighbor_mask & batched_index_select(mask, nearest_indices, dim = 2)
 
         if exists(edges):
             edges = batched_index_select(edges, nearest_indices, dim = 2)
+
+        # calculate basis
+
+        basis = get_basis(neighbor_rel_pos, num_degrees - 1, differentiable = self.differentiable_coors)
 
         # main logic
 

@@ -150,7 +150,8 @@ model = SE3Transformer(
     num_degrees = 2,
     valid_radius = 10,
     attend_sparse_neighbors = True,  # this must be set to true, in which case it will assert that you pass in the adjacency matrix
-    num_neighbors = 0                # if you set this to 0, it will only consider the connected neighbors as defined by the adjacency matrix. but if you set a value greater than 0, it will continue to fetch the closest points up to this many, excluding the ones already specified by the adjacency matrix
+    num_neighbors = 0,               # if you set this to 0, it will only consider the connected neighbors as defined by the adjacency matrix. but if you set a value greater than 0, it will continue to fetch the closest points up to this many, excluding the ones already specified by the adjacency matrix
+    max_sparse_neighbors = 8         # you can cap the number of neighbors, sampled from within your sparse set of neighbors as defined by the adjacency matrix, if specified
 )
 
 feats = torch.randn(1, 128, 32)
@@ -180,8 +181,8 @@ model = SE3Transformer(
     output_degrees = 2,
     num_edge_tokens = 4,
     edge_dim = 2,
-    num_neighbors = 0,
-    attend_sparse_neighbors = True
+    attend_sparse_neighbors = True,
+    num_neighbors = 0
 )
 
 feats = torch.randn(1, 32, 64)

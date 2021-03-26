@@ -8,6 +8,7 @@ def test_transformer():
         dim = 64,
         depth = 1,
         num_degrees = 2,
+        num_neighbors = 4,
         valid_radius = 10
     )
 
@@ -21,8 +22,9 @@ def test_transformer():
 def test_transformer_with_edges():
     model = SE3Transformer(
         dim = 64,
-        depth = 2,
+        depth = 1,
         num_degrees = 2,
+        num_neighbors = 4,
         edge_dim = 4,
         num_edge_tokens = 4
     )
@@ -38,8 +40,9 @@ def test_transformer_with_edges():
 def test_equivariance():
     model = SE3Transformer(
         dim = 64,
-        depth = 2,
+        depth = 1,
         attend_self = True,
+        num_neighbors = 4,
         num_degrees = 2,
         output_degrees = 2,
         fourier_encode_dist = True
@@ -60,7 +63,7 @@ def test_equivariance():
 def test_equivariance_only_sparse_neighbors():
     model = SE3Transformer(
         dim = 64,
-        depth = 2,
+        depth = 1,
         attend_self = True,
         num_degrees = 2,
         output_degrees = 2,
@@ -86,8 +89,9 @@ def test_equivariance_only_sparse_neighbors():
 def test_equivariance_with_reversible_network():
     model = SE3Transformer(
         dim = 64,
-        depth = 2,
+        depth = 1,
         attend_self = True,
+        num_neighbors = 4,
         num_degrees = 2,
         output_degrees = 2,
         reversible = True
@@ -107,8 +111,9 @@ def test_equivariance_with_reversible_network():
 def test_equivariance_with_type_one_input():
     model = SE3Transformer(
         dim = 64,
-        depth = 2,
+        depth = 1,
         attend_self = True,
+        num_neighbors = 4,
         num_degrees = 2,
         input_degrees = 2,
         output_degrees = 2

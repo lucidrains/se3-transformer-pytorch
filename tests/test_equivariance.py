@@ -68,7 +68,9 @@ def test_equivariance_only_sparse_neighbors():
         num_degrees = 2,
         output_degrees = 2,
         num_neighbors = 0,
-        attend_sparse_neighbors = True
+        attend_sparse_neighbors = True,
+        num_adj_degrees = 2,
+        adj_dim = 4
     )
 
     feats = torch.randn(1, 32, 64)
@@ -77,7 +79,6 @@ def test_equivariance_only_sparse_neighbors():
 
     seq = torch.arange(32)
     adj_mat = (seq[:, None] >= (seq[None, :] - 1)) & (seq[:, None] <= (seq[None, :] + 1))
-    adj_mat = (adj_mat.float() @ adj_mat.float()) > 0
 
     R   = rot(15, 0, 45)
     out1 = model(feats, coors @ R, mask, adj_mat = adj_mat, return_type = 1)

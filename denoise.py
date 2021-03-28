@@ -31,7 +31,9 @@ transformer = SE3Transformer(
     reduce_dim_out = True,
     differentiable_coors = True,
     num_neighbors = 0,
-    attend_sparse_neighbors = True
+    attend_sparse_neighbors = True,
+    num_adj_degrees = 2,
+    adj_dim = 4
 )
 
 data = scn.load(
@@ -41,6 +43,8 @@ data = scn.load(
     batch_size = BATCH_SIZE,
     dynamic_batching = False
 )
+# Add gaussian noise to the coords
+# Testing the refinement algorithm
 
 dl = cycle(data['train'])
 optim = Adam(transformer.parameters(), lr=1e-4)
@@ -56,10 +60,9 @@ for _ in range(10000):
         masks = masks.cuda().bool()
 
         l = seqs.shape[1]
-        coords = rearrange(coords, 'b (l s) c -> b l s c', s=14)
+        coords = rearrange(coords, 'b (l s) c -> b l s c', s = 14)
 
-        # keep backbone coordinates
-
+        # Keeping only the backbone coordinates
         coords = coords[:, :, 0:3, :]
         coords = rearrange(coords, 'b l s c -> b (l s) c')
 
@@ -70,7 +73,6 @@ for _ in range(10000):
 
         i = torch.arange(seq.shape[-1], device = seqs.device)
         adj_mat = (i[:, None] >= (i[None, :] - 1)) & (i[:, None] <= (i[None, :] + 1))
-        adj_mat = (adj_mat.float() @ adj_mat.float()) > 0  # get second degree neighbors
 
         out = transformer(
             seq,

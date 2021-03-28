@@ -477,6 +477,8 @@ class SE3Transformer(nn.Module):
         fourier_encode_dist = False,
         num_neighbors = float('inf'),
         attend_sparse_neighbors = False,
+        num_adj_degrees = None,
+        adj_dim = 0,
         max_sparse_neighbors = float('inf')
     ):
         super().__init__()
@@ -505,6 +507,14 @@ class SE3Transformer(nn.Module):
 
         self.attend_sparse_neighbors = attend_sparse_neighbors
         self.max_sparse_neighbors = max_sparse_neighbors
+
+        # adjacent neighbor derivation and embed
+
+        assert not (exists(num_adj_degrees) and num_adj_degrees < 1), 'make sure adjacent degrees is greater than 1'
+        self.num_adj_degrees = num_adj_degrees
+        self.adj_emb = nn.Embedding(num_adj_degrees + 1, adj_dim) if exists(num_adj_degrees) and adj_dim > 0 else None
+
+        edge_dim = (edge_dim if exists(self.edge_emb) else 0) + (adj_dim if exists(self.adj_emb) else 0)
 
         # main network
 
@@ -542,7 +552,7 @@ class SE3Transformer(nn.Module):
         if exists(self.token_emb):
             feats = self.token_emb(feats)
 
-        assert not (self.attend_sparse_neighbors and not (exists(adj_mat) or exists(edges))), 'adjacency matrix (adjacency_mat) or edges (edges) must be passed in'
+        assert not (self.attend_sparse_neighbors and not exists(adj_mat)), 'adjacency matrix (adjacency_mat) or edges (edges) must be passed in'
         assert not (exists(edges) and not exists(self.edge_emb)), 'edge embedding (num_edge_tokens & edge_dim) must be supplied if one were to train on edge types'
 
         if torch.is_tensor(feats):
@@ -557,6 +567,23 @@ class SE3Transformer(nn.Module):
 
         assert self.attend_sparse_neighbors or neighbors > 0, 'you must either attend to sparsely bonded neighbors, or set number of locally attended neighbors to be greater than 0'
 
+        # create N-degrees adjacent matrix from 1st degree connections
+        if exists(self.num_adj_degrees):
+            if len(adj_mat.shape) == 2:
+                adj_mat = repeat(adj_mat.clone(), 'i j -> b i j', b = b)
+
+            adj_indices = adj_mat.clone().long()
+
+            for ind in range(self.num_adj_degrees - 1):
+                degree = ind + 2
+
+                next_degree_adj_mat = (adj_mat.float() @ adj_mat.float()) > 0
+                next_degree_mask = (next_degree_adj_mat.float() - adj_mat.float()).bool()
+                adj_indices.masked_fill_(next_degree_mask, degree)
+                adj_mat = next_degree_adj_mat.clone()
+
+        # se3 transformer by default cannot have a node attend to itself
+
         exclude_self_mask = rearrange(~torch.eye(n, dtype = torch.bool, device = device), 'i j -> () i j')
 
         # calculate sparsely connected neighbors
@@ -568,8 +595,6 @@ class SE3Transformer(nn.Module):
             if exists(adj_mat):
                 if len(adj_mat) == 2:
                     adj_mat = repeat(adj_mat, 'i j -> b i j', b = b)
-            elif exists(edges):
-                adj_mat = edges > 0
 
             adj_mat = adj_mat.masked_select(exclude_self_mask).reshape(b, n, n -1)
 
@@ -600,6 +625,10 @@ class SE3Transformer(nn.Module):
         if exists(edges):
             edges = self.edge_emb(edges)
             edges = edges.masked_select(exclude_self_mask[..., None]).reshape(b, n, n - 1, -1)
+
+        if exists(self.adj_emb):
+            adj_emb = self.adj_emb(adj_indices)
+            edges = torch.cat((edges, adj_emb), dim = -1) if exists(edges) else adj_emb
 
         rel_dist = rel_pos.norm(dim = -1)
 

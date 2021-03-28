@@ -167,7 +167,7 @@ adj_mat = (i[:, None] <= (i[None, :] + 1)) & (i[:, None] >= (i[None, :] - 1))
 out = model(feats, coors, mask, adj_mat = adj_mat) # (1, 128, 512)
 ```
 
-If you had been passing in the edges, as long as you assume that an edge index of `0` indicates no connectivity, it will automatically derive the adjacency matrix for you and include it.
+You can also have the network automatically derive for you the Nth-degree neighbors with one extra keyword `num_adj_degrees`. If you would like the system to differentiate between the degree of the neighbors as edge information, further pass in a non-zero `adj_dim`.
 
 ```python
 import torch
@@ -179,18 +179,23 @@ model = SE3Transformer(
     attend_self = True,
     num_degrees = 2,
     output_degrees = 2,
-    num_edge_tokens = 4,
-    edge_dim = 2,
+    num_neighbors = 0,
     attend_sparse_neighbors = True,
-    num_neighbors = 0
+    num_adj_degrees = 2,    # automatically derive 2nd degree neighbors
+    adj_dim = 4             # embed 1st and 2nd degree neighbors (as well as null neighbors) with edge embeddings of this dimension
 )
 
 feats = torch.randn(1, 32, 64)
 coors = torch.randn(1, 32, 3)
 mask  = torch.ones(1, 32).bool()
-bonds = torch.randint(0, 4, (1, 32, 32))
 
-out = model(feats, coors, mask, edges = bonds, return_type = 1)
+# placeholder adjacency matrix
+# naively assuming the sequence is one long chain (128, 128)
+
+i = torch.arange(128)
+adj_mat = (i[:, None] <= (i[None, :] + 1)) & (i[:, None] >= (i[None, :] - 1))
+
+out = model(feats, coors, mask, adj_mat = adj_mat, return_type = 1)
 ```
 
 ## Scaling (wip)

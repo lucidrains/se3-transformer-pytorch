@@ -568,6 +568,7 @@ class SE3Transformer(nn.Module):
         assert self.attend_sparse_neighbors or neighbors > 0, 'you must either attend to sparsely bonded neighbors, or set number of locally attended neighbors to be greater than 0'
 
         # create N-degrees adjacent matrix from 1st degree connections
+
         if exists(self.num_adj_degrees):
             if len(adj_mat.shape) == 2:
                 adj_mat = repeat(adj_mat.clone(), 'i j -> b i j', b = b)

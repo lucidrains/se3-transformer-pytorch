@@ -593,6 +593,8 @@ class SE3Transformer(nn.Module):
         num_sparse_neighbors = 0
 
         if self.attend_sparse_neighbors:
+            assert exists(adj_mat), 'adjacency matrix must be passed in (keyword argument adj_mat)'
+
             if exists(adj_mat):
                 if len(adj_mat) == 2:
                     adj_mat = repeat(adj_mat, 'i j -> b i j', b = b)

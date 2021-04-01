@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import nn, einsum
 
 from se3_transformer_pytorch.basis import get_basis
-from se3_transformer_pytorch.utils import exists, default, uniq, map_values, batched_index_select, masked_mean, to_order, fourier_encode_dist
+from se3_transformer_pytorch.utils import exists, default, uniq, map_values, batched_index_select, masked_mean, to_order, fourier_encode
 from se3_transformer_pytorch.reversible import ReversibleSequence, SequentialSequence
 
 from einops import rearrange, repeat
@@ -264,8 +264,7 @@ class RadialFunc(nn.Module):
 
     def forward(self, x):
         if self.fourier_encode_dist:
-            x = fourier_encode_dist(x, num_encodings = self.num_fourier_features)
-            x = rearrange(x, 'b n m () d -> b n m d')
+            x = fourier_encode(x, num_encodings = self.num_fourier_features)
 
         y = self.net(x)
         return rearrange(y, '... (o i f) -> ... o () i () f', i = self.in_dim, o = self.out_dim)
@@ -489,6 +488,7 @@ class SE3Transformer(nn.Module):
 
         assert not (exists(num_edge_tokens) and not exists(edge_dim)), 'edge dimension (edge_dim) must be supplied if SE3 transformer is to have edge tokens'
         self.edge_emb = nn.Embedding(num_edge_tokens, edge_dim) if exists(num_edge_tokens) else None
+        self.has_edges = exists(edge_dim)
 
         self.input_degrees = input_degrees
         self.num_degrees = num_degrees
@@ -514,7 +514,7 @@ class SE3Transformer(nn.Module):
         self.num_adj_degrees = num_adj_degrees
         self.adj_emb = nn.Embedding(num_adj_degrees + 1, adj_dim) if exists(num_adj_degrees) and adj_dim > 0 else None
 
-        edge_dim = (edge_dim if exists(self.edge_emb) else 0) + (adj_dim if exists(self.adj_emb) else 0)
+        edge_dim = (edge_dim if self.has_edges else 0) + (adj_dim if exists(self.adj_emb) else 0)
 
         # main network
 
@@ -553,7 +553,7 @@ class SE3Transformer(nn.Module):
             feats = self.token_emb(feats)
 
         assert not (self.attend_sparse_neighbors and not exists(adj_mat)), 'adjacency matrix (adjacency_mat) or edges (edges) must be passed in'
-        assert not (exists(edges) and not exists(self.edge_emb)), 'edge embedding (num_edge_tokens & edge_dim) must be supplied if one were to train on edge types'
+        assert not (self.has_edges and not exists(edges)), 'edge embedding (num_edge_tokens & edge_dim) must be supplied if one were to train on edge types'
 
         if torch.is_tensor(feats):
             feats = {'0': feats[..., None]}
@@ -626,7 +626,9 @@ class SE3Transformer(nn.Module):
             mask = mask.masked_select(exclude_self_mask).reshape(b, n, n - 1)
 
         if exists(edges):
-            edges = self.edge_emb(edges)
+            if exists(self.edge_emb):
+                edges = self.edge_emb(edges)
+
             edges = edges.masked_select(exclude_self_mask[..., None]).reshape(b, n, n - 1, -1)
 
         if exists(self.adj_emb):

@@ -1,7 +1,7 @@
 import torch
 from se3_transformer_pytorch.se3_transformer_pytorch import SE3Transformer
 from se3_transformer_pytorch.irr_repr import rot
-from se3_transformer_pytorch.utils import torch_default_dtype
+from se3_transformer_pytorch.utils import torch_default_dtype, fourier_encode
 
 def test_transformer():
     model = SE3Transformer(
@@ -36,6 +36,31 @@ def test_transformer_with_edges():
 
     out = model(feats, coors, mask, edges = edges, return_type = 0)
     assert out.shape == (1, 32, 64), 'output must be of the right shape'
+
+def test_transformer_with_continuous_edges():
+    model = SE3Transformer(
+        dim = 64,
+        depth = 1,
+        attend_self = True,
+        num_degrees = 2,
+        output_degrees = 2,
+        edge_dim = 34
+    )
+
+    feats = torch.randn(1, 32, 64)
+    coors = torch.randn(1, 32, 3)
+    mask  = torch.ones(1, 32).bool()
+
+    pairwise_continuous_values = torch.randint(0, 4, (1, 32, 32, 2))
+
+    edges = fourier_encode(
+        pairwise_continuous_values,
+        num_encodings = 8,
+        include_self = True
+    )
+
+    out = model(feats, coors, mask, edges = edges, return_type = 1)
+    assert True
 
 def test_equivariance():
     model = SE3Transformer(

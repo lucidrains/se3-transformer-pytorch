@@ -8,6 +8,8 @@ import contextlib
 from functools import wraps, lru_cache
 from filelock import FileLock
 
+from einops import rearrange
+
 # helper functions
 
 def exists(val):
@@ -51,13 +53,14 @@ def masked_mean(tensor, mask, dim = -1):
     mean.masked_fill_(total_el == 0, 0.)
     return mean
 
-def fourier_encode_dist(x, num_encodings = 4, include_self = True):
+def fourier_encode(x, num_encodings = 4, include_self = True, flatten = True):
     x = x.unsqueeze(-1)
     device, dtype, orig_x = x.device, x.dtype, x
     scales = 2 ** torch.arange(num_encodings, device = device, dtype = dtype)
     x = x / scales
     x = torch.cat([x.sin(), x.cos()], dim=-1)
     x = torch.cat((x, orig_x), dim = -1) if include_self else x
+    x = rearrange(x, 'b m n ... -> b m n (...)') if flatten else x
     return x
 
 # default dtype context manager

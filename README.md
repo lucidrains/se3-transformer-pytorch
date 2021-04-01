@@ -134,6 +134,37 @@ mask  = torch.ones(2, 32).bool()
 pred = model(atoms, coors, mask, edges = bonds, return_type = 0) # (2, 32, 1)
 ```
 
+If you would like to pass in continuous values for your edges, you can choose to not set the `num_edge_tokens`, encode your discrete bond types, and then concat it to the fourier features of these continuous values
+
+```python
+import torch
+from se3_transformer_pytorch import SE3Transformer
+from se3_transformer_pytorch.utils import fourier_encode
+
+model = SE3Transformer(
+    dim = 64,
+    depth = 1,
+    attend_self = True,
+    num_degrees = 2,
+    output_degrees = 2,
+    edge_dim = 34           # edge dimension must match the final dimension of the edges being passed in
+)
+
+feats = torch.randn(1, 32, 64)
+coors = torch.randn(1, 32, 3)
+mask  = torch.ones(1, 32).bool()
+
+pairwise_continuous_values = torch.randint(0, 4, (1, 32, 32, 2))  # say there are 2
+
+edges = fourier_encode(
+    pairwise_continuous_values,
+    num_encodings = 8,
+    include_self = True
+) # (1, 32, 32, 34) - {2 * (2 * 8 + 1)}
+
+out = model(feats, coors, mask, edges = edges, return_type = 1)
+```
+
 ## Sparse Neighbors
 
 If you know the connectivity of your points (say you are working with molecules), you can pass in an adjacency matrix, in the form of a boolean mask (where `True` indicates connectivity).

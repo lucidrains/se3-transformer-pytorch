@@ -596,7 +596,7 @@ class SE3Transformer(nn.Module):
             assert exists(adj_mat), 'adjacency matrix must be passed in (keyword argument adj_mat)'
 
             if exists(adj_mat):
-                if len(adj_mat) == 2:
+                if len(adj_mat.shape) == 2:
                     adj_mat = repeat(adj_mat, 'i j -> b i j', b = b)
 
             adj_mat = adj_mat.masked_select(exclude_self_mask).reshape(b, n, n -1)

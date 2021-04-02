@@ -567,6 +567,10 @@ class SE3Transformer(nn.Module):
 
         assert self.attend_sparse_neighbors or neighbors > 0, 'you must either attend to sparsely bonded neighbors, or set number of locally attended neighbors to be greater than 0'
 
+        # se3 transformer by default cannot have a node attend to itself
+
+        exclude_self_mask = rearrange(~torch.eye(n, dtype = torch.bool, device = device), 'i j -> () i j')
+
         # create N-degrees adjacent matrix from 1st degree connections
 
         if exists(self.num_adj_degrees):
@@ -583,9 +587,7 @@ class SE3Transformer(nn.Module):
                 adj_indices.masked_fill_(next_degree_mask, degree)
                 adj_mat = next_degree_adj_mat.clone()
 
-        # se3 transformer by default cannot have a node attend to itself
-
-        exclude_self_mask = rearrange(~torch.eye(n, dtype = torch.bool, device = device), 'i j -> () i j')
+            adj_indices = adj_indices.masked_select(exclude_self_mask).reshape(b, n, n - 1)
 
         # calculate sparsely connected neighbors
 

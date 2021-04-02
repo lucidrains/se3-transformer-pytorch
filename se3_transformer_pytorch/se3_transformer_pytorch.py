@@ -154,7 +154,8 @@ class ConvSE3(nn.Module):
         self_interaction = True,
         pool = True,
         edge_dim = 0,
-        fourier_encode_dist = False
+        fourier_encode_dist = False,
+        num_fourier_features = 4
     ):
         super().__init__()
         self.fiber_in = fiber_in
@@ -162,11 +163,14 @@ class ConvSE3(nn.Module):
         self.edge_dim = edge_dim
         self.self_interaction = self_interaction
 
+        self.num_fourier_features = num_fourier_features
+        self.fourier_encode_dist = fourier_encode_dist
+
         # Neighbor -> center weights
         self.kernel_unary = nn.ModuleDict()
 
         for (di, mi), (do, mo) in (self.fiber_in * self.fiber_out):
-            self.kernel_unary[f'({di},{do})'] = PairwiseConv(di, mi, do, mo, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist)
+            self.kernel_unary[f'({di},{do})'] = PairwiseConv(di, mi, do, mo, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, num_fourier_features = num_fourier_features)
 
         self.pool = pool
 
@@ -189,9 +193,14 @@ class ConvSE3(nn.Module):
         kernels = {}
         outputs = {}
 
+        if self.fourier_encode_dist:
+            rel_dist = fourier_encode(rel_dist[..., None], num_encodings = self.num_fourier_features)
+
         for (di, mi), (do, mo) in (self.fiber_in * self.fiber_out):
             etype = f'({di},{do})'
             kernel_fn = self.kernel_unary[etype]
+
+
             edge_features = torch.cat((rel_dist, edges), dim = -1) if exists(edges) else rel_dist
             kernels[etype] = kernel_fn(edge_features, basis = basis)
         
@@ -263,9 +272,6 @@ class RadialFunc(nn.Module):
             nn.init.kaiming_uniform_(m.weight)
 
     def forward(self, x):
-        if self.fourier_encode_dist:
-            x = fourier_encode(x, num_encodings = self.num_fourier_features)
-
         y = self.net(x)
         return rearrange(y, '... (o i f) -> ... o () i () f', i = self.in_dim, o = self.out_dim)
 
@@ -278,6 +284,7 @@ class PairwiseConv(nn.Module):
         degree_out,
         nc_out,
         edge_dim = 0,
+        num_fourier_features = 4,
         fourier_encode_dist = False
     ):
         super().__init__()
@@ -290,7 +297,7 @@ class PairwiseConv(nn.Module):
         self.d_out = to_order(degree_out)
         self.edge_dim = edge_dim
 
-        self.rp = RadialFunc(self.num_freq, nc_in, nc_out, edge_dim, fourier_encode_dist)
+        self.rp = RadialFunc(self.num_freq, nc_in, nc_out, edge_dim, fourier_encode_dist, num_fourier_features)
 
     def forward(self, feat, basis):
         R = self.rp(feat)

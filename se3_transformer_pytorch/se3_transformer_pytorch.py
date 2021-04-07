@@ -166,11 +166,14 @@ class ConvSE3(nn.Module):
         self.num_fourier_features = num_fourier_features
         self.fourier_encode_dist = fourier_encode_dist
 
+        # radial function will assume a dimension of at minimum 1, for the relative distance - extra fourier features must be added to the edge dimension
+        edge_dim += (0 if not fourier_encode_dist else (num_fourier_features * 2))
+
         # Neighbor -> center weights
         self.kernel_unary = nn.ModuleDict()
 
         for (di, mi), (do, mo) in (self.fiber_in * self.fiber_out):
-            self.kernel_unary[f'({di},{do})'] = PairwiseConv(di, mi, do, mo, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, num_fourier_features = num_fourier_features)
+            self.kernel_unary[f'({di},{do})'] = PairwiseConv(di, mi, do, mo, edge_dim = edge_dim)
 
         self.pool = pool
 
@@ -239,8 +242,6 @@ class RadialFunc(nn.Module):
         in_dim,
         out_dim,
         edge_dim = None,
-        fourier_encode_dist = False,
-        num_fourier_features = 4,
         mid_dim = 128
     ):
         super().__init__()
@@ -250,13 +251,8 @@ class RadialFunc(nn.Module):
         self.out_dim = out_dim
         self.edge_dim = default(edge_dim, 0)
 
-        self.fourier_encode_dist = fourier_encode_dist
-        self.num_fourier_features = num_fourier_features if fourier_encode_dist else 0
-
-        input_dim = self.edge_dim + 1 + (self.num_fourier_features * 2)
-
         self.net = nn.Sequential(
-            nn.Linear(input_dim, mid_dim),
+            nn.Linear(self.edge_dim + 1, mid_dim),
             nn.LayerNorm(mid_dim),
             nn.ReLU(),
             nn.Linear(mid_dim, mid_dim),
@@ -283,9 +279,7 @@ class PairwiseConv(nn.Module):
         nc_in,
         degree_out,
         nc_out,
-        edge_dim = 0,
-        num_fourier_features = 4,
-        fourier_encode_dist = False
+        edge_dim = 0
     ):
         super().__init__()
         self.degree_in = degree_in
@@ -297,7 +291,7 @@ class PairwiseConv(nn.Module):
         self.d_out = to_order(degree_out)
         self.edge_dim = edge_dim
 
-        self.rp = RadialFunc(self.num_freq, nc_in, nc_out, edge_dim, fourier_encode_dist, num_fourier_features)
+        self.rp = RadialFunc(self.num_freq, nc_in, nc_out, edge_dim)
 
     def forward(self, feat, basis):
         R = self.rp(feat)

@@ -489,7 +489,7 @@ class SE3Transformer(nn.Module):
 
         assert not (exists(num_edge_tokens) and not exists(edge_dim)), 'edge dimension (edge_dim) must be supplied if SE3 transformer is to have edge tokens'
         self.edge_emb = nn.Embedding(num_edge_tokens, edge_dim) if exists(num_edge_tokens) else None
-        self.has_edges = exists(edge_dim)
+        self.has_edges = exists(edge_dim) and edge_dim > 0
 
         self.input_degrees = input_degrees
         self.num_degrees = num_degrees

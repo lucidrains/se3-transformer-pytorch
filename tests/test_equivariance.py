@@ -64,8 +64,8 @@ def test_transformer_with_continuous_edges():
 
 def test_different_input_dimensions_for_types():
     model = SE3Transformer(
-        dim_in = (64, 16),
-        dim = 64,
+        dim_in = (4, 2),
+        dim = 4,
         depth = 1,
         input_degrees = 2,
         num_degrees = 2,
@@ -73,8 +73,8 @@ def test_different_input_dimensions_for_types():
         reduce_dim_out = True
     )
 
-    atom_feats  = torch.randn(2, 32, 64, 1)
-    coors_feats = torch.randn(2, 32, 16, 3)
+    atom_feats  = torch.randn(2, 32, 4, 1)
+    coors_feats = torch.randn(2, 32, 2, 3)
 
     features = {'0': atom_feats, '1': coors_feats}
     coors = torch.randn(2, 32, 3)

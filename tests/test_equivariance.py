@@ -62,6 +62,27 @@ def test_transformer_with_continuous_edges():
     out = model(feats, coors, mask, edges = edges, return_type = 1)
     assert True
 
+def test_different_input_dimensions_for_types():
+    model = SE3Transformer(
+        dim_in = (64, 16),
+        dim = 64,
+        depth = 1,
+        input_degrees = 2,
+        num_degrees = 2,
+        output_degrees = 2,
+        reduce_dim_out = True
+    )
+
+    atom_feats  = torch.randn(2, 32, 64, 1)
+    coors_feats = torch.randn(2, 32, 16, 3)
+
+    features = {'0': atom_feats, '1': coors_feats}
+    coors = torch.randn(2, 32, 3)
+    mask  = torch.ones(2, 32).bool()
+
+    refined_coors = coors + model(features, coors, mask, return_type = 1)
+    assert True
+
 def test_equivariance():
     model = SE3Transformer(
         dim = 64,

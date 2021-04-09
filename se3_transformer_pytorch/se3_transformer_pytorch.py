@@ -36,7 +36,8 @@ class Fiber(nn.Module):
 
     @staticmethod
     def create(num_degrees, dim):
-        return Fiber([FiberEl(degree, dim) for degree in range(num_degrees)])
+        dim_tuple = dim if isinstance(dim, tuple) else ((dim,) * num_degrees)
+        return Fiber([FiberEl(degree, dim) for degree, dim in zip(range(num_degrees), dim_tuple)])
 
     def __getitem__(self, degree):
         return dict(self.structure)[degree]
@@ -203,7 +204,6 @@ class ConvSE3(nn.Module):
             etype = f'({di},{do})'
             kernel_fn = self.kernel_unary[etype]
 
-
             edge_features = torch.cat((rel_dist, edges), dim = -1) if exists(edges) else rel_dist
             kernels[etype] = kernel_fn(edge_features, basis = basis)
         
@@ -213,6 +213,7 @@ class ConvSE3(nn.Module):
 
             for degree_in, m_in in self.fiber_in:
                 x = inp[str(degree_in)]
+
                 x = batched_index_select(x, neighbor_indices, dim = 1)
                 x = x.view(*x.shape[:3], to_order(degree_in) * m_in, 1)
 
@@ -479,7 +480,9 @@ class SE3Transformer(nn.Module):
         attend_sparse_neighbors = False,
         num_adj_degrees = None,
         adj_dim = 0,
-        max_sparse_neighbors = float('inf')
+        max_sparse_neighbors = float('inf'),
+        dim_in = None,
+        dim_out = None
     ):
         super().__init__()
         self.dim = dim
@@ -517,11 +520,16 @@ class SE3Transformer(nn.Module):
 
         edge_dim = (edge_dim if self.has_edges else 0) + (adj_dim if exists(self.adj_emb) else 0)
 
-        # main network
+        # define fibers and dimensionality
 
-        fiber_in     = Fiber.create(input_degrees, dim)
+        dim_in = default(dim_in, dim)
+        dim_out = default(dim_out, dim)
+
+        fiber_in     = Fiber.create(input_degrees, dim_in)
         fiber_hidden = Fiber.create(num_degrees, dim)
-        fiber_out    = Fiber.create(output_degrees, dim)
+        fiber_out    = Fiber.create(output_degrees, dim_out)
+
+        # main network
 
         self.conv_in  = ConvSE3(fiber_in, fiber_hidden, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist)
 

@@ -350,6 +350,7 @@ class AttentionSE3(nn.Module):
         attend_self = False,
         edge_dim = None,
         fourier_encode_dist = False,
+        rel_dist_num_fourier_features = 4,
         use_null_kv = False
     ):
         super().__init__()
@@ -361,8 +362,8 @@ class AttentionSE3(nn.Module):
         self.heads = heads
 
         self.to_q = LinearSE3(fiber, hidden_fiber)
-        self.to_k = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist)
-        self.to_v = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist)
+        self.to_k = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features)
+        self.to_v = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features)
         self.to_out = LinearSE3(hidden_fiber, fiber) if project_out else nn.Identity()
 
         self.use_null_kv = use_null_kv
@@ -440,10 +441,11 @@ class AttentionBlockSE3(nn.Module):
         attend_self = False,
         edge_dim = None,
         use_null_kv = False,
-        fourier_encode_dist = False
+        fourier_encode_dist = False,
+        rel_dist_num_fourier_features = 4,
     ):
         super().__init__()
-        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv)
+        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv, rel_dist_num_fourier_features = rel_dist_num_fourier_features)
         self.prenorm = NormSE3(fiber)
         self.residual = ResidualSE3()
 
@@ -476,6 +478,7 @@ class SE3Transformer(nn.Module):
         use_null_kv = False,
         differentiable_coors = False,
         fourier_encode_dist = False,
+        rel_dist_num_fourier_features = 4,
         num_neighbors = float('inf'),
         attend_sparse_neighbors = False,
         num_adj_degrees = None,
@@ -531,19 +534,19 @@ class SE3Transformer(nn.Module):
 
         # main network
 
-        self.conv_in  = ConvSE3(fiber_in, fiber_hidden, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist)
+        self.conv_in  = ConvSE3(fiber_in, fiber_hidden, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features)
 
         layers = nn.ModuleList([])
         for _ in range(depth):
             layers.append(nn.ModuleList([
-                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, use_null_kv = use_null_kv),
+                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, rel_dist_num_fourier_features = rel_dist_num_fourier_features, use_null_kv = use_null_kv),
                 FeedForwardBlockSE3(fiber_hidden)
             ]))
 
         execution_class = ReversibleSequence if reversible else SequentialSequence
         self.net = execution_class(layers)
 
-        self.conv_out = ConvSE3(fiber_hidden, fiber_out, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist)
+        self.conv_out = ConvSE3(fiber_hidden, fiber_out, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features)
 
         self.norm = NormSE3(fiber_out)
 

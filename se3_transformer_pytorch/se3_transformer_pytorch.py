@@ -485,7 +485,8 @@ class SE3Transformer(nn.Module):
         adj_dim = 0,
         max_sparse_neighbors = float('inf'),
         dim_in = None,
-        dim_out = None
+        dim_out = None,
+        norm_out = False
     ):
         super().__init__()
         self.dim = dim
@@ -548,7 +549,7 @@ class SE3Transformer(nn.Module):
 
         self.conv_out = ConvSE3(fiber_hidden, fiber_out, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features)
 
-        self.norm = NormSE3(fiber_out)
+        self.norm = NormSE3(fiber_out) if norm_out else nn.Identity()
 
         self.linear_out = LinearSE3(
             fiber_out,

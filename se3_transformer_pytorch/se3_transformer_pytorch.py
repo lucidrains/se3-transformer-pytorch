@@ -486,7 +486,8 @@ class SE3Transformer(nn.Module):
         max_sparse_neighbors = float('inf'),
         dim_in = None,
         dim_out = None,
-        norm_out = False
+        norm_out = False,
+        num_conv_layers = 0
     ):
         super().__init__()
         self.dim = dim
@@ -533,9 +534,22 @@ class SE3Transformer(nn.Module):
         fiber_hidden = Fiber.create(num_degrees, dim)
         fiber_out    = Fiber.create(output_degrees, dim_out)
 
+        conv_kwargs = dict(edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features)
+
         # main network
 
-        self.conv_in  = ConvSE3(fiber_in, fiber_hidden, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features)
+        self.conv_in  = ConvSE3(fiber_in, fiber_hidden, **conv_kwargs)
+
+        # pre-convs
+
+        self.convs = nn.ModuleList([])
+        for _ in range(num_conv_layers):
+            self.convs.append(nn.ModuleList([
+                ConvSE3(fiber_hidden, fiber_hidden, **conv_kwargs),
+                NormSE3(fiber_hidden)
+            ]))
+
+        # trunk
 
         layers = nn.ModuleList([])
         for _ in range(depth):
@@ -547,7 +561,9 @@ class SE3Transformer(nn.Module):
         execution_class = ReversibleSequence if reversible else SequentialSequence
         self.net = execution_class(layers)
 
-        self.conv_out = ConvSE3(fiber_hidden, fiber_out, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features)
+        # out
+
+        self.conv_out = ConvSE3(fiber_hidden, fiber_out, **conv_kwargs)
 
         self.norm = NormSE3(fiber_out) if norm_out else nn.Identity()
 
@@ -696,6 +712,12 @@ class SE3Transformer(nn.Module):
         # project in
 
         x = self.conv_in(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
+
+        # preconvolution layers
+
+        for conv, nonlin in self.convs:
+            x = conv(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
+            x = nonlin(x)
 
         # transformer layers
 

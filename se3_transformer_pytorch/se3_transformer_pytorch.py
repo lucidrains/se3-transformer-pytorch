@@ -12,6 +12,32 @@ from se3_transformer_pytorch.reversible import ReversibleSequence, SequentialSeq
 
 from einops import rearrange, repeat
 
+class SinusoidalEmbeddings(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        inv_freq = 1. / (10000 ** (torch.arange(0, dim, 2).float() / dim))
+        self.register_buffer('inv_freq', inv_freq)
+
+    def forward(self, x):
+        n = x.shape[1]
+        t = torch.arange(n, device = x.device).type_as(self.inv_freq)
+        sinusoid_inp = torch.einsum('i , j -> i j', t, self.inv_freq)
+        emb = torch.cat((sinusoid_inp.sin(), sinusoid_inp.cos()), dim=-1)
+        return emb[None, :, :]
+
+def rotate_every_two(x):
+    x = rearrange(x, '... (d j) m -> ... d j m', j = 2)
+    x1, x2 = x.unbind(dim = -2)
+    x = torch.stack((-x2, x1), dim = -2)
+    return rearrange(x, '... d j m -> ... (d j) m')
+
+def apply_rotary_pos_emb(t, sinu_pos):
+    sinu_pos = rearrange(sinu_pos, '... (j d) m -> ... j d m', j = 2)
+    sin, cos = sinu_pos.unbind(dim = -3)
+    sin, cos = map(lambda t: repeat(t, '... d m -> ... (d j) m', j = 2), (sin, cos))
+    t = (t * cos) + (rotate_every_two(t) * sin)
+    return t
+
 # fiber helpers
 
 FiberEl = namedtuple('FiberEl', ['degrees', 'dim'])
@@ -382,7 +408,7 @@ class AttentionSE3(nn.Module):
             self.to_self_k = LinearSE3(fiber, hidden_fiber)
             self.to_self_v = LinearSE3(fiber, hidden_fiber)
 
-    def forward(self, features, edge_info, rel_dist, basis):
+    def forward(self, features, edge_info, rel_dist, basis, pos_emb):
         h, attend_self = self.heads, self.attend_self
         device, dtype = get_tensor_device_and_dtype(features)
         neighbor_indices, neighbor_mask, edges = edge_info
@@ -393,6 +419,13 @@ class AttentionSE3(nn.Module):
             neighbor_mask = rearrange(neighbor_mask, 'b i j -> b () i j')
 
         neighbor_indices = rearrange(neighbor_indices, 'b i j -> b () i j')
+
+        sinu_emb = pos_emb(features['0'])
+        k_sinu_emb = batched_index_select(sinu_emb, neighbor_indices, dim = 1)
+        q_sinu_emb = rearrange(sinu_emb, 'b n d -> b () n d')
+
+        q_sinu_emb = rearrange(q_sinu_emb, '... -> ... ()')
+        k_sinu_emb = rearrange(k_sinu_emb, '... -> ... ()')
 
         queries = self.to_q(features)
         keys, values = self.to_k(features, edge_info, rel_dist, basis), self.to_v(features, edge_info, rel_dist, basis)
@@ -406,6 +439,9 @@ class AttentionSE3(nn.Module):
 
             q = rearrange(q, 'b i (h d) m -> b h i d m', h = h)
             k, v = map(lambda t: rearrange(t, 'b i j (h d) m -> b h i j d m', h = h), (k, v))
+
+            q = apply_rotary_pos_emb(q, q_sinu_emb)
+            k = apply_rotary_pos_emb(k, k_sinu_emb)
 
             if self.use_null_kv:
                 null_k, null_v = map(lambda t: t[degree], (self.null_keys, self.null_values))
@@ -449,10 +485,10 @@ class AttentionBlockSE3(nn.Module):
         self.prenorm = NormSE3(fiber)
         self.residual = ResidualSE3()
 
-    def forward(self, features, edge_info, rel_dist, basis):
+    def forward(self, features, edge_info, rel_dist, basis, pos_emb):
         res = features
         outputs = self.prenorm(features)
-        outputs = self.attn(outputs, edge_info, rel_dist, basis)
+        outputs = self.attn(outputs, edge_info, rel_dist, basis, pos_emb)
         return self.residual(outputs, res)
 
 # main class
@@ -555,6 +591,8 @@ class SE3Transformer(nn.Module):
             fiber_out,
             Fiber.create(output_degrees, 1)
         ) if reduce_dim_out else None
+
+        self.sinu_emb = SinusoidalEmbeddings(dim_head)
 
     def forward(self, feats, coors, mask = None, adj_mat = None, edges = None, return_type = None, return_pooled = False):
         _mask = mask
@@ -699,7 +737,7 @@ class SE3Transformer(nn.Module):
 
         # transformer layers
 
-        x = self.net(x, edge_info = edge_info, rel_dist = neighbor_rel_dist, basis = basis)
+        x = self.net(x, edge_info = edge_info, rel_dist = neighbor_rel_dist, basis = basis, pos_emb = self.sinu_emb)
 
         # project out
 

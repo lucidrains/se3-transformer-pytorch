@@ -19,6 +19,23 @@ def test_transformer():
     out = model(feats, coors, mask, return_type = 0)
     assert out.shape == (1, 32, 64), 'output must be of the right shape'
 
+def test_causal_se3_transformer():
+    model = SE3Transformer(
+        dim = 64,
+        depth = 1,
+        num_degrees = 2,
+        num_neighbors = 4,
+        valid_radius = 10,
+        causal = True
+    )
+
+    feats = torch.randn(1, 32, 64)
+    coors = torch.randn(1, 32, 3)
+    mask  = torch.ones(1, 32).bool()
+
+    out = model(feats, coors, mask, return_type = 0)
+    assert out.shape == (1, 32, 64), 'output must be of the right shape'
+
 def test_transformer_with_edges():
     model = SE3Transformer(
         dim = 64,

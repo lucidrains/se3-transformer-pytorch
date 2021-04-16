@@ -487,7 +487,8 @@ class SE3Transformer(nn.Module):
         dim_in = None,
         dim_out = None,
         norm_out = False,
-        num_conv_layers = 0
+        num_conv_layers = 0,
+        causal = False
     ):
         super().__init__()
         self.dim = dim
@@ -535,6 +536,11 @@ class SE3Transformer(nn.Module):
         fiber_out    = Fiber.create(output_degrees, dim_out)
 
         conv_kwargs = dict(edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features)
+
+        # causal
+
+        assert not (causal and not attend_self), 'attending to self must be turned on if in autoregressive mode (for the first token)'
+        self.causal = causal
 
         # main network
 
@@ -673,6 +679,13 @@ class SE3Transformer(nn.Module):
         modified_rel_dist = rel_dist
         if exists(sparse_neighbor_mask):
             modified_rel_dist.masked_fill_(sparse_neighbor_mask, 0.)
+
+        # mask out future nodes to high distance if causal turned on
+
+        if self.causal:
+            max_value = torch.finfo(modified_rel_dist.dtype).max
+            causal_mask = torch.ones(n, n - 1, device = device).triu().bool()
+            modified_rel_dist.masked_fill_(causal_mask[None, ...], max_value)
 
         # if number of local neighbors by distance is set to 0, then only fetch the sparse neighbors defined by adjacency matrix
 

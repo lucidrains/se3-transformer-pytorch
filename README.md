@@ -229,6 +229,31 @@ adj_mat = (i[:, None] <= (i[None, :] + 1)) & (i[:, None] >= (i[None, :] - 1))
 out = model(feats, coors, mask, adj_mat = adj_mat, return_type = 1)
 ```
 
+## Autoregressive
+
+You can use SE3 Transformers autoregressively with just one extra flag
+
+```python
+import torch
+from se3_transformer_pytorch import SE3Transformer
+
+model = SE3Transformer(
+    dim = 512,
+    heads = 8,
+    depth = 6,
+    dim_head = 64,
+    num_degrees = 4,
+    valid_radius = 10,
+    causal = True          # set this to True
+)
+
+feats = torch.randn(1, 1024, 512)
+coors = torch.randn(1, 1024, 3)
+mask  = torch.ones(1, 1024).bool()
+
+out = model(feats, coors, mask) # (1, 1024, 512)
+```
+
 ## Scaling (wip)
 
 This section will list ongoing efforts to make SE3 Transformer scale a little better.

@@ -457,7 +457,7 @@ class AttentionBlockSE3(nn.Module):
     def __init__(
         self,
         fiber,
-        dim_head = 64,
+        dim_head = 24,
         heads = 8,
         attend_self = False,
         edge_dim = None,
@@ -486,7 +486,7 @@ class SE3Transformer(nn.Module):
         *,
         dim,
         heads = 8,
-        dim_head = 64,
+        dim_head = 24,
         depth = 2,
         input_degrees = 1,
         num_degrees = 2,

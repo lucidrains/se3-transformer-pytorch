@@ -302,7 +302,7 @@ class PairwiseConv(nn.Module):
         chunks = self.chunks
         R = self.rp(feat)
         B = basis[f'{self.degree_in},{self.degree_out}']
-
+        print(R.shape, B.shape)
         out_shape = (*R.shape[:3], self.d_out * self.nc_out, -1)
 
         # torch.sum(R * B, dim = -1) is too memory intensive
@@ -406,14 +406,12 @@ class AttentionSE3(nn.Module):
     def forward(self, features, edge_info, rel_dist, basis):
         h, attend_self = self.heads, self.attend_self
         device, dtype = get_tensor_device_and_dtype(features)
-        neighbor_indices, neighbor_mask, edges = edge_info
+        _, neighbor_mask, edges = edge_info
 
         max_neg_value = -torch.finfo().max
 
         if exists(neighbor_mask):
             neighbor_mask = rearrange(neighbor_mask, 'b i j -> b () i j')
-
-        neighbor_indices = rearrange(neighbor_indices, 'b i j -> b () i j')
 
         queries = self.to_q(features)
         keys, values = self.to_k(features, edge_info, rel_dist, basis), self.to_v(features, edge_info, rel_dist, basis)

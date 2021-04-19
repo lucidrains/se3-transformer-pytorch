@@ -157,7 +157,7 @@ class ConvSE3(nn.Module):
         edge_dim = 0,
         fourier_encode_dist = False,
         num_fourier_features = 4,
-        chunks = 4
+        splits = 4
     ):
         super().__init__()
         self.fiber_in = fiber_in
@@ -175,7 +175,7 @@ class ConvSE3(nn.Module):
         self.kernel_unary = nn.ModuleDict()
 
         for (di, mi), (do, mo) in (self.fiber_in * self.fiber_out):
-            self.kernel_unary[f'({di},{do})'] = PairwiseConv(di, mi, do, mo, edge_dim = edge_dim, chunks = chunks)
+            self.kernel_unary[f'({di},{do})'] = PairwiseConv(di, mi, do, mo, edge_dim = edge_dim, splits = splits)
 
         self.pool = pool
 
@@ -282,7 +282,7 @@ class PairwiseConv(nn.Module):
         degree_out,
         nc_out,
         edge_dim = 0,
-        chunks = 4
+        splits = 4
     ):
         super().__init__()
         self.degree_in = degree_in
@@ -296,20 +296,20 @@ class PairwiseConv(nn.Module):
 
         self.rp = RadialFunc(self.num_freq, nc_in, nc_out, edge_dim)
 
-        self.chunks = chunks
+        self.splits = splits
 
     def forward(self, feat, basis):
-        chunks = self.chunks
+        splits = self.splits
         R = self.rp(feat)
         B = basis[f'{self.degree_in},{self.degree_out}']
-        print(R.shape, B.shape)
+
         out_shape = (*R.shape[:3], self.d_out * self.nc_out, -1)
 
         # torch.sum(R * B, dim = -1) is too memory intensive
         # needs to be chunked to reduce peak memory usage
 
         B = B.expand(-1, -1, -1, R.shape[3], -1, -1, -1, -1)
-        R, B = map(lambda t: rearrange(t, 'b n h s ... -> (b n h s) ...').chunk(chunks, dim = 0), (R, B))
+        R, B = map(lambda t: rearrange(t, 'b n h s ... -> (b n h s) ...').split(splits, dim = 0), (R, B))
 
         out = []
         for r_chunk, b_chunk in zip(R, B):
@@ -372,7 +372,7 @@ class AttentionSE3(nn.Module):
         fourier_encode_dist = False,
         rel_dist_num_fourier_features = 4,
         use_null_kv = False,
-        chunks = 4
+        splits = 4
     ):
         super().__init__()
         hidden_dim = dim_head * heads
@@ -383,8 +383,8 @@ class AttentionSE3(nn.Module):
         self.heads = heads
 
         self.to_q = LinearSE3(fiber, hidden_fiber)
-        self.to_k = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, chunks = chunks)
-        self.to_v = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, chunks = chunks)
+        self.to_k = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, splits = splits)
+        self.to_v = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, splits = splits)
         self.to_out = LinearSE3(hidden_fiber, fiber) if project_out else nn.Identity()
 
         self.use_null_kv = use_null_kv
@@ -462,10 +462,10 @@ class AttentionBlockSE3(nn.Module):
         use_null_kv = False,
         fourier_encode_dist = False,
         rel_dist_num_fourier_features = 4,
-        chunks = 4
+        splits = 4
     ):
         super().__init__()
-        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv, rel_dist_num_fourier_features = rel_dist_num_fourier_features, chunks = chunks)
+        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv, rel_dist_num_fourier_features = rel_dist_num_fourier_features, splits = splits)
         self.prenorm = NormSE3(fiber)
         self.residual = ResidualSE3()
 
@@ -510,7 +510,7 @@ class SE3Transformer(nn.Module):
         norm_out = False,
         num_conv_layers = 0,
         causal = False,
-        chunks = 4
+        splits = 4
     ):
         super().__init__()
         self.dim = dim
@@ -557,7 +557,7 @@ class SE3Transformer(nn.Module):
         fiber_hidden = Fiber.create(num_degrees, dim)
         fiber_out    = Fiber.create(output_degrees, dim_out)
 
-        conv_kwargs = dict(edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, chunks = chunks)
+        conv_kwargs = dict(edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, splits = splits)
 
         # causal
 
@@ -582,7 +582,7 @@ class SE3Transformer(nn.Module):
         layers = nn.ModuleList([])
         for _ in range(depth):
             layers.append(nn.ModuleList([
-                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, rel_dist_num_fourier_features = rel_dist_num_fourier_features, use_null_kv = use_null_kv, chunks = chunks),
+                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, rel_dist_num_fourier_features = rel_dist_num_fourier_features, use_null_kv = use_null_kv, splits = splits),
                 FeedForwardBlockSE3(fiber_hidden)
             ]))
 

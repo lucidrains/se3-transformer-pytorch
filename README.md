@@ -229,6 +229,43 @@ adj_mat = (i[:, None] <= (i[None, :] + 1)) & (i[:, None] >= (i[None, :] - 1))
 out = model(feats, coors, mask, adj_mat = adj_mat, return_type = 1)
 ```
 
+## Neighbors
+
+You can further control which nodes can be considered by passing in a neighbor mask. All `False` values will be masked out of consideration.
+
+```python
+import torch
+from se3_transformer_pytorch.se3_transformer_pytorch import SE3Transformer
+
+model = SE3Transformer(
+    dim = 16,
+    dim_head = 16,
+    attend_self = True,
+    num_degrees = 4,
+    output_degrees = 2,
+    num_edge_tokens = 4,
+    num_neighbors = 8,
+    edge_dim = 2,
+    depth = 3
+)
+
+feats = torch.randn(1, 32, 16)
+coors = torch.randn(1, 32, 3)
+mask  = torch.ones(1, 32).bool()
+bonds = torch.randint(0, 4, (1, 32, 32))
+
+neighbor_mask = torch.ones(1, 32, 32).bool() # set the nodes you wish to be masked out as False
+
+out = model(
+    feats,
+    coors,
+    mask,
+    edges = bonds,
+    neighbor_mask = neighbor_mask,
+    return_type = 1
+)
+```
+
 ## Autoregressive
 
 You can use SE3 Transformers autoregressively with just one extra flag

@@ -600,7 +600,17 @@ class SE3Transformer(nn.Module):
             Fiber.create(output_degrees, 1)
         ) if reduce_dim_out else None
 
-    def forward(self, feats, coors, mask = None, adj_mat = None, edges = None, return_type = None, return_pooled = False):
+    def forward(
+        self,
+        feats,
+        coors,
+        mask = None,
+        adj_mat = None,
+        edges = None,
+        return_type = None,
+        return_pooled = False,
+        neighbor_mask = None
+    ):
         _mask = mask
 
         if self.output_degrees == 1:
@@ -627,6 +637,8 @@ class SE3Transformer(nn.Module):
         # se3 transformer by default cannot have a node attend to itself
 
         exclude_self_mask = rearrange(~torch.eye(n, dtype = torch.bool, device = device), 'i j -> () i j')
+        remove_self = lambda t: t.masked_select(exclude_self_mask).reshape(b, n, n - 1)
+        get_max_value = lambda t: torch.finfo(t.dtype).max
 
         # create N-degrees adjacent matrix from 1st degree connections
 
@@ -658,7 +670,7 @@ class SE3Transformer(nn.Module):
                 if len(adj_mat.shape) == 2:
                     adj_mat = repeat(adj_mat, 'i j -> b i j', b = b)
 
-            adj_mat = adj_mat.masked_select(exclude_self_mask).reshape(b, n, n -1)
+            adj_mat = remove_self(adj_mat)
 
             adj_mat_values = adj_mat.float()
             adj_mat_max_neighbors = adj_mat_values.sum(dim = -1).max().item()
@@ -696,16 +708,29 @@ class SE3Transformer(nn.Module):
 
         rel_dist = rel_pos.norm(dim = -1)
 
-        # use sparse neighbor mask to assign priority of bonded
+        # rel_dist gets modified using adjacency or neighbor mask
 
         modified_rel_dist = rel_dist
+        max_value = get_max_value(modified_rel_dist) # for masking out nodes from being considered as neighbors
+
+        # neighbors
+
+        if exists(neighbor_mask):
+            max_neighbors = neighbor_mask.sum(dim = -1).max().item()
+            if max_neighbors > neighbors:
+                print(f'neighbor_mask shows maximum number of neighbors as {max_neighbors} but specified number of neighbors is {neighbors}')
+
+            neighbor_mask = remove_self(neighbor_mask)
+            modified_rel_dist.masked_fill_(~neighbor_mask, max_value)
+
+        # use sparse neighbor mask to assign priority of bonded
+
         if exists(sparse_neighbor_mask):
             modified_rel_dist.masked_fill_(sparse_neighbor_mask, 0.)
 
         # mask out future nodes to high distance if causal turned on
 
         if self.causal:
-            max_value = torch.finfo(modified_rel_dist.dtype).max
             causal_mask = torch.ones(n, n - 1, device = device).triu().bool()
             modified_rel_dist.masked_fill_(causal_mask[None, ...], max_value)
 

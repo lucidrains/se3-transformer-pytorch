@@ -244,7 +244,7 @@ model = SE3Transformer(
     num_degrees = 4,
     output_degrees = 2,
     num_edge_tokens = 4,
-    num_neighbors = 8,
+    num_neighbors = 8,      # make sure you set this value as the maximum number of neighbors set by your neighbor_mask, or it will throw a warning
     edge_dim = 2,
     depth = 3
 )

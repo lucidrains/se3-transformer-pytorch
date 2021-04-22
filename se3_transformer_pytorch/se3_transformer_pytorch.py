@@ -716,11 +716,12 @@ class SE3Transformer(nn.Module):
         # neighbors
 
         if exists(neighbor_mask):
+            neighbor_mask = remove_self(neighbor_mask)
+
             max_neighbors = neighbor_mask.sum(dim = -1).max().item()
             if max_neighbors > neighbors:
                 print(f'neighbor_mask shows maximum number of neighbors as {max_neighbors} but specified number of neighbors is {neighbors}')
 
-            neighbor_mask = remove_self(neighbor_mask)
             modified_rel_dist.masked_fill_(~neighbor_mask, max_value)
 
         # use sparse neighbor mask to assign priority of bonded

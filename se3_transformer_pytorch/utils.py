@@ -27,6 +27,9 @@ def to_order(degree):
 def map_values(fn, d):
     return {k: fn(v) for k, v in d.items()}
 
+def cast_tuple(val, depth):
+    return val if isinstance(val, tuple) else (val,) * depth
+
 def batched_index_select(values, indices, dim = 1):
     value_dims = values.shape[(dim + 1):]
     values_shape, indices_shape = map(lambda t: list(t.shape), (values, indices))

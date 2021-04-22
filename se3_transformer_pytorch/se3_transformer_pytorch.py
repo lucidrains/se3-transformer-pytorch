@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import nn, einsum
 
 from se3_transformer_pytorch.basis import get_basis
-from se3_transformer_pytorch.utils import exists, default, uniq, map_values, batched_index_select, masked_mean, to_order, fourier_encode
+from se3_transformer_pytorch.utils import exists, default, uniq, map_values, batched_index_select, masked_mean, to_order, fourier_encode, cast_tuple
 from se3_transformer_pytorch.reversible import ReversibleSequence, SequentialSequence
 
 from einops import rearrange, repeat
@@ -513,6 +513,9 @@ class SE3Transformer(nn.Module):
         splits = 4
     ):
         super().__init__()
+        dim_in = default(dim_in, dim)
+        self.dim_in = cast_tuple(dim_in, input_degrees)
+
         self.dim = dim
 
         self.token_emb = None
@@ -627,7 +630,7 @@ class SE3Transformer(nn.Module):
 
         b, n, d, *_, device = *feats['0'].shape, feats['0'].device
 
-        assert d == self.dim, f'feature dimension {d} must be equal to dimension given at init {self.dim}'
+        assert d == self.dim_in[0], f'feature dimension {d} must be equal to dimension given at init {self.dim_in[0]}'
         assert set(map(int, feats.keys())) == set(range(self.input_degrees)), f'input must have {self.input_degrees} degree'
 
         num_degrees, neighbors, max_sparse_neighbors, valid_radius = self.num_degrees, self.num_neighbors, self.max_sparse_neighbors, self.valid_radius

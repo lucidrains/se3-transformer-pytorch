@@ -1,6 +1,6 @@
-from math import sqrt
+from math import sqrt, ceil
 from itertools import product
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 
 import torch
 import torch.nn.functional as F
@@ -372,7 +372,8 @@ class AttentionSE3(nn.Module):
         fourier_encode_dist = False,
         rel_dist_num_fourier_features = 4,
         use_null_kv = False,
-        splits = 4
+        splits = 4,
+        seq_splits = 4
     ):
         super().__init__()
         hidden_dim = dim_head * heads
@@ -381,6 +382,7 @@ class AttentionSE3(nn.Module):
 
         self.scale = dim_head ** -0.5
         self.heads = heads
+        self.seq_splits = seq_splits
 
         self.to_q = LinearSE3(fiber, hidden_fiber)
         self.to_k = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, splits = splits)
@@ -404,51 +406,80 @@ class AttentionSE3(nn.Module):
             self.to_self_v = LinearSE3(fiber, hidden_fiber)
 
     def forward(self, features, edge_info, rel_dist, basis):
-        h, attend_self = self.heads, self.attend_self
+        h, attend_self, seq_splits = self.heads, self.attend_self, self.seq_splits
         device, dtype = get_tensor_device_and_dtype(features)
-        _, neighbor_mask, edges = edge_info
 
-        max_neg_value = -torch.finfo().max
+        neighbor_indices, neighbor_masks, edges = edge_info
 
-        if exists(neighbor_mask):
-            neighbor_mask = rearrange(neighbor_mask, 'b i j -> b () i j')
+        # prepare variables for splitting
 
-        queries = self.to_q(features)
-        keys, values = self.to_k(features, edge_info, rel_dist, basis), self.to_v(features, edge_info, rel_dist, basis)
+        features_ = features
+        num_splits = ceil(next(iter(features.values())).shape[1] / seq_splits)
 
-        if attend_self:
-            self_keys, self_values = self.to_self_k(features), self.to_self_v(features)
+        # create splits for features
 
-        outputs = {}
-        for degree in features.keys():
-            q, k, v = map(lambda t: t[degree], (queries, keys, values))
+        def split_dict_values(d, splits):
+            keys, values = d.keys(), d.values()
+            split_values = list(zip(*map(lambda t: t.split(splits, dim = 1), values)))
+            return list(map(lambda t: dict(zip(keys, t)), split_values))
 
-            q = rearrange(q, 'b i (h d) m -> b h i d m', h = h)
-            k, v = map(lambda t: rearrange(t, 'b i j (h d) m -> b h i j d m', h = h), (k, v))
+        features_splits = split_dict_values(features, seq_splits)
+        basis_splits = split_dict_values(basis, seq_splits)
 
-            if self.use_null_kv:
-                null_k, null_v = map(lambda t: t[degree], (self.null_keys, self.null_values))
-                null_k, null_v = map(lambda t: repeat(t, 'h d m -> b h i () d m', b = q.shape[0], i = q.shape[2]), (null_k, null_v))
-                k = torch.cat((null_k, k), dim = 3)
-                v = torch.cat((null_v, v), dim = 3)
+        # create splits for rest of inputs
+
+        neighbor_indices_splits = neighbor_indices.split(seq_splits, dim = 1)
+        rel_dist_splits = rel_dist.split(seq_splits, dim = 1)
+
+        neighbor_masks_splits = neighbor_masks.split(seq_splits, dim = 1) if exists(neighbor_masks) else ((None,) * num_splits)
+        edges_splits = edges.split(seq_splits, dim = 1) if exists(edges) else ((None,) * num_splits)
+
+        # process splits
+
+        outputs = defaultdict(list)
+
+        for features, neighbor_indices, neighbor_masks, edges, rel_dist, basis in zip(features_splits, neighbor_indices_splits, neighbor_masks_splits, edges_splits, rel_dist_splits, basis_splits):
+            queries = self.to_q(features)
+
+            edge_info = (neighbor_indices, neighbor_masks, edges)
+            keys, values = self.to_k(features_, edge_info, rel_dist, basis), self.to_v(features_, edge_info, rel_dist, basis)
 
             if attend_self:
-                self_k, self_v = map(lambda t: t[degree], (self_keys, self_values))
-                self_k, self_v = map(lambda t: rearrange(t, 'b n (h d) m -> b h n () d m', h = h), (self_k, self_v))
-                k = torch.cat((self_k, k), dim = 3)
-                v = torch.cat((self_v, v), dim = 3)
+                self_keys, self_values = self.to_self_k(features), self.to_self_v(features)
 
-            sim = einsum('b h i d m, b h i j d m -> b h i j', q, k) * self.scale
+            for degree in features.keys():
+                q, k, v = map(lambda t: t[degree], (queries, keys, values))
 
-            if exists(neighbor_mask):
-                num_left_pad = int(attend_self) + int(self.use_null_kv)
-                mask = F.pad(neighbor_mask, (num_left_pad, 0), value = True)
-                sim.masked_fill_(~mask, max_neg_value)
+                q = rearrange(q, 'b i (h d) m -> b h i d m', h = h)
+                k, v = map(lambda t: rearrange(t, 'b i j (h d) m -> b h i j d m', h = h), (k, v))
 
-            attn = sim.softmax(dim = -1)
-            out = einsum('b h i j, b h i j d m -> b h i d m', attn, v)
-            outputs[degree] = rearrange(out, 'b h n d m -> b n (h d) m')
+                if self.use_null_kv:
+                    null_k, null_v = map(lambda t: t[degree], (self.null_keys, self.null_values))
+                    null_k, null_v = map(lambda t: repeat(t, 'h d m -> b h i () d m', b = q.shape[0], i = q.shape[2]), (null_k, null_v))
+                    k = torch.cat((null_k, k), dim = 3)
+                    v = torch.cat((null_v, v), dim = 3)
 
+                if attend_self:
+                    self_k, self_v = map(lambda t: t[degree], (self_keys, self_values))
+                    self_k, self_v = map(lambda t: rearrange(t, 'b n (h d) m -> b h n () d m', h = h), (self_k, self_v))
+                    k = torch.cat((self_k, k), dim = 3)
+                    v = torch.cat((self_v, v), dim = 3)
+
+                sim = einsum('b h i d m, b h i j d m -> b h i j', q, k) * self.scale
+
+                if exists(neighbor_masks):
+                    max_neg_value = -torch.finfo(sim.dtype).max
+                    num_left_pad = int(attend_self) + int(self.use_null_kv)
+                    mask = F.pad(neighbor_masks, (num_left_pad, 0), value = True)
+                    mask = rearrange(mask, 'b i j -> b () i j')
+                    sim.masked_fill_(~mask, max_neg_value)
+
+                attn = sim.softmax(dim = -1)
+                out = einsum('b h i j, b h i j d m -> b h i d m', attn, v)
+                out = rearrange(out, 'b h n d m -> b n (h d) m')
+                outputs[degree].append(out)
+
+        outputs = map_values(lambda t: torch.cat(t, dim = 1), outputs)
         return self.to_out(outputs)
 
 class AttentionBlockSE3(nn.Module):

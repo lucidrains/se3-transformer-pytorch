@@ -372,7 +372,8 @@ class AttentionSE3(nn.Module):
         fourier_encode_dist = False,
         rel_dist_num_fourier_features = 4,
         use_null_kv = False,
-        splits = 4
+        splits = 4,
+        global_feats_dim = None
     ):
         super().__init__()
         hidden_dim = dim_head * heads
@@ -403,7 +404,14 @@ class AttentionSE3(nn.Module):
             self.to_self_k = LinearSE3(fiber, hidden_fiber)
             self.to_self_v = LinearSE3(fiber, hidden_fiber)
 
-    def forward(self, features, edge_info, rel_dist, basis):
+        self.accept_global_feats = exists(global_feats_dim)
+        if self.accept_global_feats:
+            global_input_fiber = Fiber.create(1, global_feats_dim)
+            global_output_fiber = Fiber.create(1, hidden_fiber[0])
+            self.to_global_k = LinearSE3(global_input_fiber, global_output_fiber)
+            self.to_global_v = LinearSE3(global_input_fiber, global_output_fiber)
+
+    def forward(self, features, edge_info, rel_dist, basis, global_feats = None):
         h, attend_self = self.heads, self.attend_self
         device, dtype = get_tensor_device_and_dtype(features)
         _, neighbor_mask, edges = edge_info
@@ -418,6 +426,9 @@ class AttentionSE3(nn.Module):
 
         if attend_self:
             self_keys, self_values = self.to_self_k(features), self.to_self_v(features)
+
+        if exists(global_feats):
+            global_keys, global_values = self.to_global_k(global_feats), self.to_global_v(global_feats)
 
         outputs = {}
         for degree in features.keys():
@@ -438,10 +449,16 @@ class AttentionSE3(nn.Module):
                 k = torch.cat((self_k, k), dim = 3)
                 v = torch.cat((self_v, v), dim = 3)
 
+            if exists(global_feats) and degree == '0':
+                global_k, global_v = map(lambda t: t[degree], (global_keys, global_values))
+                global_k, global_v = map(lambda t: repeat(t, 'b j (h d) m -> b h i j d m', h = h, i = k.shape[2]), (global_k, global_v))
+                k = torch.cat((global_k, k), dim = 3)
+                v = torch.cat((global_v, v), dim = 3)
+
             sim = einsum('b h i d m, b h i j d m -> b h i j', q, k) * self.scale
 
             if exists(neighbor_mask):
-                num_left_pad = int(attend_self) + int(self.use_null_kv)
+                num_left_pad = sim.shape[-1] - neighbor_mask.shape[-1]
                 mask = F.pad(neighbor_mask, (num_left_pad, 0), value = True)
                 sim.masked_fill_(~mask, max_neg_value)
 
@@ -462,17 +479,18 @@ class AttentionBlockSE3(nn.Module):
         use_null_kv = False,
         fourier_encode_dist = False,
         rel_dist_num_fourier_features = 4,
-        splits = 4
+        splits = 4,
+        global_feats_dim = False
     ):
         super().__init__()
-        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv, rel_dist_num_fourier_features = rel_dist_num_fourier_features, fourier_encode_dist =fourier_encode_dist, splits = splits)
+        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv, rel_dist_num_fourier_features = rel_dist_num_fourier_features, fourier_encode_dist =fourier_encode_dist, splits = splits, global_feats_dim = global_feats_dim)
         self.prenorm = NormSE3(fiber)
         self.residual = ResidualSE3()
 
-    def forward(self, features, edge_info, rel_dist, basis):
+    def forward(self, features, edge_info, rel_dist, basis, global_feats = None):
         res = features
         outputs = self.prenorm(features)
-        outputs = self.attn(outputs, edge_info, rel_dist, basis)
+        outputs = self.attn(outputs, edge_info, rel_dist, basis, global_feats)
         return self.residual(outputs, res)
 
 # main class
@@ -510,7 +528,8 @@ class SE3Transformer(nn.Module):
         norm_out = False,
         num_conv_layers = 0,
         causal = False,
-        splits = 4
+        splits = 4,
+        global_feats_dim = None
     ):
         super().__init__()
         dim_in = default(dim_in, dim)
@@ -582,10 +601,13 @@ class SE3Transformer(nn.Module):
 
         # trunk
 
+        self.accept_global_feats = exists(global_feats_dim)
+        assert not (reversible and self.accept_global_feats), 'reversibility and global features are not compatible'
+
         layers = nn.ModuleList([])
         for _ in range(depth):
             layers.append(nn.ModuleList([
-                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, rel_dist_num_fourier_features = rel_dist_num_fourier_features, use_null_kv = use_null_kv, splits = splits),
+                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, rel_dist_num_fourier_features = rel_dist_num_fourier_features, use_null_kv = use_null_kv, splits = splits, global_feats_dim = global_feats_dim),
                 FeedForwardBlockSE3(fiber_hidden)
             ]))
 
@@ -612,8 +634,11 @@ class SE3Transformer(nn.Module):
         edges = None,
         return_type = None,
         return_pooled = False,
-        neighbor_mask = None
+        neighbor_mask = None,
+        global_feats = None
     ):
+        assert not (self.accept_global_feats ^ exists(global_feats)), 'you cannot pass in global features unless you init the class correctly'
+
         _mask = mask
 
         if self.output_degrees == 1:
@@ -627,6 +652,9 @@ class SE3Transformer(nn.Module):
 
         if torch.is_tensor(feats):
             feats = {'0': feats[..., None]}
+
+        if torch.is_tensor(global_feats):
+            global_feats = {'0': global_feats[..., None]}
 
         b, n, d, *_, device = *feats['0'].shape, feats['0'].device
 
@@ -785,7 +813,7 @@ class SE3Transformer(nn.Module):
 
         # transformer layers
 
-        x = self.net(x, edge_info = edge_info, rel_dist = neighbor_rel_dist, basis = basis)
+        x = self.net(x, edge_info = edge_info, rel_dist = neighbor_rel_dist, basis = basis, global_feats = global_feats)
 
         # project out
 

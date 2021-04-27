@@ -266,6 +266,37 @@ out = model(
 )
 ```
 
+## Global Nodes
+
+This feature allows you to pass in vectors that can be viewed as global nodes that are seen by all other nodes. The idea would be to pool your graph into a few feature vectors, which will be projected to key / values across all the attention layers in the network. All nodes will have full access to global node information, regardless of nearest neighbors or adjacency calculation.
+
+```python
+import torch
+from se3_transformer_pytorch.se3_transformer_pytorch import SE3Transformer
+
+model = SE3Transformer(
+    dim = 64,
+    depth = 1,
+    num_degrees = 2,
+    num_neighbors = 4,
+    valid_radius = 10,
+    global_feats_dim = 16
+)
+
+feats = torch.randn(1, 32, 64)
+coors = torch.randn(1, 32, 3)
+mask  = torch.ones(1, 32).bool()
+
+global_feats = torch.randn(1, 2, 16)
+
+out = model(feats, coors, mask, return_type = 0, global_feats = global_feats)
+```
+
+Todo:
+
+- [ ] allow global nodes to attend to all other nodes, to give the network a global conduit for information. (Similar to BigBird, ETC, Longformer etc)
+
+
 ## Autoregressive
 
 You can use SE3 Transformers autoregressively with just one extra flag

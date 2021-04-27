@@ -280,7 +280,7 @@ model = SE3Transformer(
     num_degrees = 2,
     num_neighbors = 4,
     valid_radius = 10,
-    global_feats_dim = 16
+    global_feats_dim = 16  # this must be set with the dimension of the global feature vectors
 )
 
 feats = torch.randn(1, 32, 64)

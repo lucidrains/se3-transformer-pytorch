@@ -808,8 +808,8 @@ class SE3Transformer(nn.Module):
         # preconvolution layers
 
         for conv, nonlin in self.convs:
-            x = conv(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
             x = nonlin(x)
+            x = conv(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
 
         # transformer layers
 

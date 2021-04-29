@@ -308,14 +308,11 @@ class PairwiseConv(nn.Module):
         # torch.sum(R * B, dim = -1) is too memory intensive
         # needs to be chunked to reduce peak memory usage
 
-        B = B.expand(-1, -1, -1, R.shape[3], -1, -1, -1, -1)
-        R, B = map(lambda t: rearrange(t, 'b n h s ... -> (b n h s) ...').split(splits, dim = 0), (R, B))
+        out = 0
+        for i in range(R.shape[-1]):
+            out += R[..., i] * B[..., i]
 
-        out = []
-        for r_chunk, b_chunk in zip(R, B):
-            out.append(torch.sum(r_chunk * b_chunk, dim = -1))
-
-        out = torch.cat(out, dim = 0)
+        out = rearrange(out, 'b n h s ... -> (b n h s) ...')
 
         # reshape and out
         return out.view(*out_shape)

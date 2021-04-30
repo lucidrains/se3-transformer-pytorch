@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import nn, einsum
 
 from se3_transformer_pytorch.basis import get_basis
-from se3_transformer_pytorch.utils import exists, default, uniq, map_values, batched_index_select, masked_mean, to_order, fourier_encode, cast_tuple
+from se3_transformer_pytorch.utils import exists, default, uniq, map_values, batched_index_select, masked_mean, to_order, fourier_encode, cast_tuple, safe_cat
 from se3_transformer_pytorch.reversible import ReversibleSequence, SequentialSequence
 
 from einops import rearrange, repeat
@@ -174,6 +174,8 @@ class ConvSE3(nn.Module):
         # Neighbor -> center weights
         self.kernel_unary = nn.ModuleDict()
 
+        self.splits = splits # for splitting the computation of kernel and basis, to reduce peak memory usage
+
         for (di, mi), (do, mo) in (self.fiber_in * self.fiber_out):
             self.kernel_unary[f'({di},{do})'] = PairwiseConv(di, mi, do, mo, edge_dim = edge_dim, splits = splits)
 
@@ -192,6 +194,7 @@ class ConvSE3(nn.Module):
         rel_dist = None,
         basis = None
     ):
+        splits = self.splits
         neighbor_indices, neighbor_masks, edges = edge_info
         rel_dist = rearrange(rel_dist, 'b m n -> b m n ()')
 
@@ -201,26 +204,41 @@ class ConvSE3(nn.Module):
         if self.fourier_encode_dist:
             rel_dist = fourier_encode(rel_dist[..., None], num_encodings = self.num_fourier_features)
 
-        for (di, mi), (do, mo) in (self.fiber_in * self.fiber_out):
-            etype = f'({di},{do})'
-            kernel_fn = self.kernel_unary[etype]
+        # split basis
 
-            edge_features = torch.cat((rel_dist, edges), dim = -1) if exists(edges) else rel_dist
-            kernels[etype] = kernel_fn(edge_features, basis = basis)
-        
+        basis_keys = basis.keys()
+        split_basis_values = list(zip(*list(map(lambda t: t.split(splits, dim = 1), basis.values()))))
+        split_basis = list(map(lambda v: dict(zip(basis_keys, v)), split_basis_values))
+
+        # go through every permutation of input degree type to output degree type
+
         for degree_out in self.fiber_out.degrees:
             output = 0
             degree_out_key = str(degree_out)
 
             for degree_in, m_in in self.fiber_in:
+                etype = f'({degree_in},{degree_out})'
+
                 x = inp[str(degree_in)]
 
                 x = batched_index_select(x, neighbor_indices, dim = 1)
                 x = x.view(*x.shape[:3], to_order(degree_in) * m_in, 1)
 
-                etype = f'({degree_in},{degree_out})'
-                kernel = kernels[etype]
-                output = output + einsum('... o i, ... i c -> ... o c', kernel, x)
+                kernel_fn = self.kernel_unary[etype]
+                edge_features = torch.cat((rel_dist, edges), dim = -1) if exists(edges) else rel_dist
+
+                output_chunk = None
+                split_x = x.split(splits, dim = 1)
+                split_edge_features = edge_features.split(splits, dim = 1)
+
+                # process input, edges, and basis in chunks along the sequence dimension
+
+                for x_chunk, edge_features, basis in zip(split_x, split_edge_features, split_basis):
+                    kernel = kernel_fn(edge_features, basis = basis)
+                    chunk = einsum('... o i, ... i c -> ... o c', kernel, x_chunk)
+                    output_chunk = safe_cat(output_chunk, chunk, dim = 1)
+
+                output = output + output_chunk
 
             if self.pool:
                 output = masked_mean(output, neighbor_masks, dim = 2) if exists(neighbor_masks) else output.mean(dim = 2)

@@ -27,6 +27,11 @@ def to_order(degree):
 def map_values(fn, d):
     return {k: fn(v) for k, v in d.items()}
 
+def safe_cat(arr, el, dim):
+    if not exists(arr):
+        return el
+    return torch.cat((arr, el), dim = dim)
+
 def cast_tuple(val, depth):
     return val if isinstance(val, tuple) else (val,) * depth
 

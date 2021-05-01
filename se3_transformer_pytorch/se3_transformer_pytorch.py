@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import nn, einsum
 
 from se3_transformer_pytorch.basis import get_basis
-from se3_transformer_pytorch.utils import exists, default, uniq, map_values, batched_index_select, masked_mean, to_order, fourier_encode, cast_tuple, safe_cat
+from se3_transformer_pytorch.utils import exists, default, uniq, map_values, batched_index_select, masked_mean, to_order, fourier_encode, cast_tuple, safe_cat, fast_split
 from se3_transformer_pytorch.reversible import ReversibleSequence, SequentialSequence
 
 from einops import rearrange, repeat
@@ -207,7 +207,7 @@ class ConvSE3(nn.Module):
         # split basis
 
         basis_keys = basis.keys()
-        split_basis_values = list(zip(*list(map(lambda t: t.split(splits, dim = 1), basis.values()))))
+        split_basis_values = list(zip(*list(map(lambda t: fast_split(t, splits, dim = 1), basis.values()))))
         split_basis = list(map(lambda v: dict(zip(basis_keys, v)), split_basis_values))
 
         # go through every permutation of input degree type to output degree type
@@ -228,8 +228,8 @@ class ConvSE3(nn.Module):
                 edge_features = torch.cat((rel_dist, edges), dim = -1) if exists(edges) else rel_dist
 
                 output_chunk = None
-                split_x = x.split(splits, dim = 1)
-                split_edge_features = edge_features.split(splits, dim = 1)
+                split_x = fast_split(x, splits, dim = 1)
+                split_edge_features = fast_split(edge_features, splits, dim = 1)
 
                 # process input, edges, and basis in chunks along the sequence dimension
 

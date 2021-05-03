@@ -296,7 +296,6 @@ Todo:
 
 - [ ] allow global nodes to attend to all other nodes, to give the network a global conduit for information. (Similar to BigBird, ETC, Longformer etc)
 
-
 ## Autoregressive
 
 You can use SE3 Transformers autoregressively with just one extra flag
@@ -320,6 +319,33 @@ coors = torch.randn(1, 1024, 3)
 mask  = torch.ones(1, 1024).bool()
 
 out = model(feats, coors, mask) # (1, 1024, 512)
+```
+
+## Experimental Features
+
+### Non-pairwise convolved keys
+
+I've discovered that using linearly projected keys (rather than the pairwise convolution) seems to do ok in a toy denoising task. This leads to 25% memory savings. You can try this feature by setting `linear_proj_keys = True`
+
+```python
+import torch
+from se3_transformer_pytorch import SE3Transformer
+
+model = SE3Transformer(
+    dim = 64,
+    depth = 1,
+    num_degrees = 4,
+    num_neighbors = 8,
+    valid_radius = 10,
+    splits = 4,
+    linear_proj_keys = True # set this to True
+).cuda()
+
+feats = torch.randn(1, 32, 64).cuda()
+coors = torch.randn(1, 32, 3).cuda()
+mask  = torch.ones(1, 32).bool().cuda()
+
+out = model(feats, coors, mask, return_type = 0)
 ```
 
 ## Scaling (wip)

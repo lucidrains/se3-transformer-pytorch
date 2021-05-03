@@ -388,7 +388,8 @@ class AttentionSE3(nn.Module):
         rel_dist_num_fourier_features = 4,
         use_null_kv = False,
         splits = 4,
-        global_feats_dim = None
+        global_feats_dim = None,
+        linear_proj_keys = False
     ):
         super().__init__()
         hidden_dim = dim_head * heads
@@ -398,8 +399,10 @@ class AttentionSE3(nn.Module):
         self.scale = dim_head ** -0.5
         self.heads = heads
 
+        self.linear_proj_keys = linear_proj_keys # whether to linearly project features for keys, rather than convolve with basis
+
         self.to_q = LinearSE3(fiber, hidden_fiber)
-        self.to_k = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, splits = splits)
+        self.to_k = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, splits = splits) if not linear_proj_keys else LinearSE3(fiber, hidden_fiber)
         self.to_v = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, splits = splits)
         self.to_out = LinearSE3(hidden_fiber, fiber) if project_out else nn.Identity()
 
@@ -429,7 +432,7 @@ class AttentionSE3(nn.Module):
     def forward(self, features, edge_info, rel_dist, basis, global_feats = None):
         h, attend_self = self.heads, self.attend_self
         device, dtype = get_tensor_device_and_dtype(features)
-        _, neighbor_mask, edges = edge_info
+        neighbor_indices, neighbor_mask, edges = edge_info
 
         max_neg_value = -torch.finfo().max
 
@@ -437,7 +440,14 @@ class AttentionSE3(nn.Module):
             neighbor_mask = rearrange(neighbor_mask, 'b i j -> b () i j')
 
         queries = self.to_q(features)
-        keys, values = self.to_k(features, edge_info, rel_dist, basis), self.to_v(features, edge_info, rel_dist, basis)
+
+        if self.linear_proj_keys:
+            keys = self.to_k(features)
+            keys = map_values(lambda val: batched_index_select(val, neighbor_indices, dim = 1), keys)
+        else:
+            keys = self.to_k(features, edge_info, rel_dist, basis)
+
+        values = self.to_v(features, edge_info, rel_dist, basis)
 
         if attend_self:
             self_keys, self_values = self.to_self_k(features), self.to_self_v(features)
@@ -495,10 +505,11 @@ class AttentionBlockSE3(nn.Module):
         fourier_encode_dist = False,
         rel_dist_num_fourier_features = 4,
         splits = 4,
-        global_feats_dim = False
+        global_feats_dim = False,
+        linear_proj_keys = False
     ):
         super().__init__()
-        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv, rel_dist_num_fourier_features = rel_dist_num_fourier_features, fourier_encode_dist =fourier_encode_dist, splits = splits, global_feats_dim = global_feats_dim)
+        self.attn = AttentionSE3(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv, rel_dist_num_fourier_features = rel_dist_num_fourier_features, fourier_encode_dist =fourier_encode_dist, splits = splits, global_feats_dim = global_feats_dim, linear_proj_keys = linear_proj_keys)
         self.prenorm = NormSE3(fiber)
         self.residual = ResidualSE3()
 
@@ -544,7 +555,8 @@ class SE3Transformer(nn.Module):
         num_conv_layers = 0,
         causal = False,
         splits = 4,
-        global_feats_dim = None
+        global_feats_dim = None,
+        linear_proj_keys = False
     ):
         super().__init__()
         dim_in = default(dim_in, dim)
@@ -622,7 +634,7 @@ class SE3Transformer(nn.Module):
         layers = nn.ModuleList([])
         for _ in range(depth):
             layers.append(nn.ModuleList([
-                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, rel_dist_num_fourier_features = rel_dist_num_fourier_features, use_null_kv = use_null_kv, splits = splits, global_feats_dim = global_feats_dim),
+                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, rel_dist_num_fourier_features = rel_dist_num_fourier_features, use_null_kv = use_null_kv, splits = splits, global_feats_dim = global_feats_dim, linear_proj_keys = linear_proj_keys),
                 FeedForwardBlockSE3(fiber_hidden)
             ]))
 

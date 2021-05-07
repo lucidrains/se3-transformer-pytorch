@@ -272,7 +272,8 @@ This feature allows you to pass in vectors that can be viewed as global nodes th
 
 ```python
 import torch
-from se3_transformer_pytorch.se3_transformer_pytorch import SE3Transformer
+from torch import nn
+from se3_transformer_pytorch import SE3Transformer
 
 model = SE3Transformer(
     dim = 64,
@@ -280,14 +281,16 @@ model = SE3Transformer(
     num_degrees = 2,
     num_neighbors = 4,
     valid_radius = 10,
-    global_feats_dim = 16  # this must be set with the dimension of the global feature vectors
+    global_feats_dim = 32 # this must be set to the dimension of the global features, in this example, 32
 )
 
 feats = torch.randn(1, 32, 64)
 coors = torch.randn(1, 32, 3)
 mask  = torch.ones(1, 32).bool()
 
-global_feats = torch.randn(1, 2, 16)
+# naively derive global features
+# by pooling features and projecting
+global_feats = nn.Linear(64, 32)(feats.mean(dim = 1, keepdim = True)) # (1, 1, 32)
 
 out = model(feats, coors, mask, return_type = 0, global_feats = global_feats)
 ```

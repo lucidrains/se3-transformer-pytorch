@@ -36,7 +36,7 @@ def test_causal_se3_transformer():
     out = model(feats, coors, mask, return_type = 0)
     assert out.shape == (1, 32, 64), 'output must be of the right shape'
 
-def test_causal_se3_transformer_with_global_nodes():
+def test_se3_transformer_with_global_nodes():
     model = SE3Transformer(
         dim = 64,
         depth = 1,
@@ -44,6 +44,26 @@ def test_causal_se3_transformer_with_global_nodes():
         num_neighbors = 4,
         valid_radius = 10,
         global_feats_dim = 16
+    )
+
+    feats = torch.randn(1, 32, 64)
+    coors = torch.randn(1, 32, 3)
+    mask  = torch.ones(1, 32).bool()
+
+    global_feats = torch.randn(1, 2, 16)
+
+    out = model(feats, coors, mask, return_type = 0, global_feats = global_feats)
+    assert out.shape == (1, 32, 64), 'output must be of the right shape'
+
+def test_one_headed_key_values_se3_transformer_with_global_nodes():
+    model = SE3Transformer(
+        dim = 64,
+        depth = 1,
+        num_degrees = 2,
+        num_neighbors = 4,
+        valid_radius = 10,
+        global_feats_dim = 16,
+        one_headed_key_values = True
     )
 
     feats = torch.randn(1, 32, 64)

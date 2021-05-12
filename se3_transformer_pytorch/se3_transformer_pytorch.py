@@ -616,7 +616,7 @@ class OneHeadedKVAttentionSE3(nn.Module):
 
             if exists(global_feats) and degree == '0':
                 global_k, global_v = map(lambda t: t[degree], (global_keys, global_values))
-                global_k, global_v = map(lambda t: repeat(t, 'b j d m -> b i j d m', i = k.shape[2]), (global_k, global_v))
+                global_k, global_v = map(lambda t: repeat(t, 'b j d m -> b i j d m', i = k.shape[1]), (global_k, global_v))
                 k = torch.cat((global_k, k), dim = 2)
                 v = torch.cat((global_v, v), dim = 2)
 

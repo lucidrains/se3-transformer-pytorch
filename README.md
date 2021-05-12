@@ -376,6 +376,31 @@ mask  = torch.ones(1, 32).bool().cuda()
 out = model(feats, coors, mask, return_type = 0)
 ```
 
+### Tied key / values
+
+You can also tie the key / values (have them be the same), for half memory savings
+
+```python
+import torch
+from se3_transformer_pytorch import SE3Transformer
+
+model = SE3Transformer(
+    dim = 64,
+    depth = 8,
+    num_degrees = 4,
+    num_neighbors = 8,
+    valid_radius = 10,
+    splits = 4,
+    tie_key_values = True # set this to True
+).cuda()
+
+feats = torch.randn(1, 32, 64).cuda()
+coors = torch.randn(1, 32, 3).cuda()
+mask  = torch.ones(1, 32).bool().cuda()
+
+out = model(feats, coors, mask, return_type = 0)
+```
+
 ## Scaling (wip)
 
 This section will list ongoing efforts to make SE3 Transformer scale a little better.

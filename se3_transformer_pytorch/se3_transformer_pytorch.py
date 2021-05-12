@@ -389,7 +389,8 @@ class AttentionSE3(nn.Module):
         use_null_kv = False,
         splits = 4,
         global_feats_dim = None,
-        linear_proj_keys = False
+        linear_proj_keys = False,
+        tie_key_values = False
     ):
         super().__init__()
         hidden_dim = dim_head * heads
@@ -402,8 +403,17 @@ class AttentionSE3(nn.Module):
         self.linear_proj_keys = linear_proj_keys # whether to linearly project features for keys, rather than convolve with basis
 
         self.to_q = LinearSE3(fiber, hidden_fiber)
-        self.to_k = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, splits = splits) if not linear_proj_keys else LinearSE3(fiber, hidden_fiber)
         self.to_v = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, splits = splits)
+
+        assert not (linear_proj_keys and tie_key_values), 'you cannot do linear projection of keys and have shared key / values turned on at the same time'
+
+        if linear_proj_keys:
+            self.to_k = LinearSE3(fiber, hidden_fiber)
+        elif not tie_key_values:
+            self.to_k = ConvSE3(fiber, hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, splits = splits)
+        else:
+            self.to_k = None
+
         self.to_out = LinearSE3(hidden_fiber, fiber) if project_out else nn.Identity()
 
         self.use_null_kv = use_null_kv
@@ -440,14 +450,15 @@ class AttentionSE3(nn.Module):
             neighbor_mask = rearrange(neighbor_mask, 'b i j -> b () i j')
 
         queries = self.to_q(features)
+        values  = self.to_v(features, edge_info, rel_dist, basis)
 
         if self.linear_proj_keys:
             keys = self.to_k(features)
             keys = map_values(lambda val: batched_index_select(val, neighbor_indices, dim = 1), keys)
+        elif not exists(self.to_k):
+            keys = values
         else:
             keys = self.to_k(features, edge_info, rel_dist, basis)
-
-        values = self.to_v(features, edge_info, rel_dist, basis)
 
         if attend_self:
             self_keys, self_values = self.to_self_k(features), self.to_self_v(features)
@@ -507,7 +518,8 @@ class OneHeadedKVAttentionSE3(nn.Module):
         use_null_kv = False,
         splits = 4,
         global_feats_dim = None,
-        linear_proj_keys = False
+        linear_proj_keys = False,
+        tie_key_values = False
     ):
         super().__init__()
         hidden_dim = dim_head * heads
@@ -521,8 +533,17 @@ class OneHeadedKVAttentionSE3(nn.Module):
         self.linear_proj_keys = linear_proj_keys # whether to linearly project features for keys, rather than convolve with basis
 
         self.to_q = LinearSE3(fiber, hidden_fiber)
-        self.to_k = ConvSE3(fiber, kv_hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, splits = splits) if not linear_proj_keys else LinearSE3(fiber, kv_hidden_fiber)
         self.to_v = ConvSE3(fiber, kv_hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, splits = splits)
+
+        assert not (linear_proj_keys and tie_key_values), 'you cannot do linear projection of keys and have shared key / values turned on at the same time'
+
+        if linear_proj_keys:
+            self.to_k = LinearSE3(fiber, hidden_fiber)
+        elif not tie_key_values:
+            self.to_k = ConvSE3(fiber, kv_hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, splits = splits)
+        else:
+            self.to_k = None
+
         self.to_out = LinearSE3(hidden_fiber, fiber) if project_out else nn.Identity()
 
         self.use_null_kv = use_null_kv
@@ -559,14 +580,15 @@ class OneHeadedKVAttentionSE3(nn.Module):
             neighbor_mask = rearrange(neighbor_mask, 'b i j -> b () i j')
 
         queries = self.to_q(features)
+        values  = self.to_v(features, edge_info, rel_dist, basis)
 
         if self.linear_proj_keys:
             keys = self.to_k(features)
             keys = map_values(lambda val: batched_index_select(val, neighbor_indices, dim = 1), keys)
+        elif not exists(self.to_k):
+            keys = values
         else:
             keys = self.to_k(features, edge_info, rel_dist, basis)
-
-        values = self.to_v(features, edge_info, rel_dist, basis)
 
         if attend_self:
             self_keys, self_values = self.to_self_k(features), self.to_self_v(features)
@@ -625,10 +647,11 @@ class AttentionBlockSE3(nn.Module):
         splits = 4,
         global_feats_dim = False,
         linear_proj_keys = False,
+        tie_key_values = False,
         attention_klass = AttentionSE3
     ):
         super().__init__()
-        self.attn = attention_klass(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv, rel_dist_num_fourier_features = rel_dist_num_fourier_features, fourier_encode_dist =fourier_encode_dist, splits = splits, global_feats_dim = global_feats_dim, linear_proj_keys = linear_proj_keys)
+        self.attn = attention_klass(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv, rel_dist_num_fourier_features = rel_dist_num_fourier_features, fourier_encode_dist =fourier_encode_dist, splits = splits, global_feats_dim = global_feats_dim, linear_proj_keys = linear_proj_keys, tie_key_values = tie_key_values)
         self.prenorm = NormSE3(fiber)
         self.residual = ResidualSE3()
 
@@ -675,7 +698,8 @@ class SE3Transformer(nn.Module):
         splits = 4,
         global_feats_dim = None,
         linear_proj_keys = False,
-        one_headed_key_values = False
+        one_headed_key_values = False,
+        tie_key_values = False
     ):
         super().__init__()
         dim_in = default(dim_in, dim)
@@ -757,7 +781,7 @@ class SE3Transformer(nn.Module):
         layers = nn.ModuleList([])
         for _ in range(depth):
             layers.append(nn.ModuleList([
-                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, rel_dist_num_fourier_features = rel_dist_num_fourier_features, use_null_kv = use_null_kv, splits = splits, global_feats_dim = global_feats_dim, linear_proj_keys = linear_proj_keys, attention_klass = attention_klass),
+                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, rel_dist_num_fourier_features = rel_dist_num_fourier_features, use_null_kv = use_null_kv, splits = splits, global_feats_dim = global_feats_dim, linear_proj_keys = linear_proj_keys, attention_klass = attention_klass, tie_key_values = tie_key_values),
                 FeedForwardBlockSE3(fiber_hidden)
             ]))
 

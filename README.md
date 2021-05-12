@@ -351,6 +351,31 @@ mask  = torch.ones(1, 32).bool().cuda()
 out = model(feats, coors, mask, return_type = 0)
 ```
 
+### Shared key / values across all heads
+
+There is a relatively unknown technique for transformers where one can share one key / value head across all the heads of the queries. In my experience in NLP, this usually leads to worse performance, but if you are really in need to tradeoff memory for more depth or higher number of degrees, this may be a good option.
+
+```python
+import torch
+from se3_transformer_pytorch import SE3Transformer
+
+model = SE3Transformer(
+    dim = 64,
+    depth = 8,
+    num_degrees = 4,
+    num_neighbors = 8,
+    valid_radius = 10,
+    splits = 4,
+    one_headed_key_values = True  # one head of key / values shared across all heads of the queries
+).cuda()
+
+feats = torch.randn(1, 32, 64).cuda()
+coors = torch.randn(1, 32, 3).cuda()
+mask  = torch.ones(1, 32).bool().cuda()
+
+out = model(feats, coors, mask, return_type = 0)
+```
+
 ## Scaling (wip)
 
 This section will list ongoing efforts to make SE3 Transformer scale a little better.
@@ -443,5 +468,16 @@ This library is largely a port of <a href="https://github.com/FabianFuchsML/se3-
     eprint    = {1707.04585},
     archivePrefix = {arXiv},
     primaryClass = {cs.CV}
+}
+```
+
+```bibtex
+@misc{shazeer2019fast,
+    title   = {Fast Transformer Decoding: One Write-Head is All You Need},
+    author  = {Noam Shazeer},
+    year    = {2019},
+    eprint  = {1911.02150},
+    archivePrefix = {arXiv},
+    primaryClass = {cs.NE}
 }
 ```

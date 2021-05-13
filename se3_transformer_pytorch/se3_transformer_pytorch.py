@@ -792,7 +792,7 @@ class SE3Transformer(nn.Module):
 
         self.conv_out = ConvSE3(fiber_hidden, fiber_out, **conv_kwargs)
 
-        self.norm = NormSE3(fiber_out) if norm_out else nn.Identity()
+        self.norm = NormSE3(fiber_out, nonlin = nn.Identity()) if norm_out or reversible else nn.Identity()
 
         self.linear_out = LinearSE3(
             fiber_out,

@@ -10,13 +10,15 @@ class SinusoidalEmbeddings(nn.Module):
 
     def forward(self, t):
         freqs = t[..., None].float() * self.inv_freq[None, :]
-        emb = torch.cat((freqs, freqs), dim = -1)
-        return emb
+        return repeat(freqs, '... d -> ... (d r)', r = 2)
 
 def rotate_half(x):
-    x = rearrange(x, '... (j d) m -> ... j d m', j = 2)
-    x1, x2 = x.unbind(dim = -3)
+    x = rearrange(x, '... (d j) m -> ... d j m', j = 2)
+    x1, x2 = x.unbind(dim = -2)
     return torch.cat((-x2, x1), dim = -2)
 
 def apply_rotary_pos_emb(t, freqs):
-    return (t * freqs.cos()) + (rotate_half(t) * freqs.sin())
+    rot_dim = freqs.shape[-2]
+    t, t_pass = t[..., :rot_dim, :], t[..., rot_dim:, :]
+    t = (t * freqs.cos()) + (rotate_half(t) * freqs.sin())
+    return torch.cat((t, t_pass), dim = -2)

@@ -9,6 +9,7 @@ from torch import nn, einsum
 from se3_transformer_pytorch.basis import get_basis
 from se3_transformer_pytorch.utils import exists, default, uniq, map_values, batched_index_select, masked_mean, to_order, fourier_encode, cast_tuple, safe_cat, fast_split
 from se3_transformer_pytorch.reversible import ReversibleSequence, SequentialSequence
+from se3_transformer_pytorch.rotary import SinusoidalEmbeddings, apply_rotary_pos_emb
 
 from einops import rearrange, repeat
 
@@ -274,10 +275,10 @@ class RadialFunc(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(self.edge_dim + 1, mid_dim),
             nn.LayerNorm(mid_dim),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(mid_dim, mid_dim),
             nn.LayerNorm(mid_dim),
-            nn.ReLU(),
+            nn.GELU(),
             nn.Linear(mid_dim, num_freq * in_dim * out_dim)
         )
 
@@ -439,7 +440,7 @@ class AttentionSE3(nn.Module):
             self.to_global_k = LinearSE3(global_input_fiber, global_output_fiber)
             self.to_global_v = LinearSE3(global_input_fiber, global_output_fiber)
 
-    def forward(self, features, edge_info, rel_dist, basis, global_feats = None):
+    def forward(self, features, edge_info, rel_dist, basis, global_feats = None, pos_emb = None):
         h, attend_self = self.heads, self.attend_self
         device, dtype = get_tensor_device_and_dtype(features)
         neighbor_indices, neighbor_mask, edges = edge_info
@@ -473,17 +474,24 @@ class AttentionSE3(nn.Module):
             q = rearrange(q, 'b i (h d) m -> b h i d m', h = h)
             k, v = map(lambda t: rearrange(t, 'b i j (h d) m -> b h i j d m', h = h), (k, v))
 
-            if self.use_null_kv:
-                null_k, null_v = map(lambda t: t[degree], (self.null_keys, self.null_values))
-                null_k, null_v = map(lambda t: repeat(t, 'h d m -> b h i () d m', b = q.shape[0], i = q.shape[2]), (null_k, null_v))
-                k = torch.cat((null_k, k), dim = 3)
-                v = torch.cat((null_v, v), dim = 3)
-
             if attend_self:
                 self_k, self_v = map(lambda t: t[degree], (self_keys, self_values))
                 self_k, self_v = map(lambda t: rearrange(t, 'b n (h d) m -> b h n () d m', h = h), (self_k, self_v))
                 k = torch.cat((self_k, k), dim = 3)
                 v = torch.cat((self_v, v), dim = 3)
+
+            if exists(pos_emb) and degree == '0':
+                query_pos_emb, key_pos_emb = pos_emb
+                query_pos_emb = rearrange(query_pos_emb, 'b i d -> b () i d ()')
+                key_pos_emb = rearrange(key_pos_emb, 'b i j d -> b () i j d ()')
+                q = apply_rotary_pos_emb(q, query_pos_emb)
+                k = apply_rotary_pos_emb(k, key_pos_emb)
+
+            if self.use_null_kv:
+                null_k, null_v = map(lambda t: t[degree], (self.null_keys, self.null_values))
+                null_k, null_v = map(lambda t: repeat(t, 'h d m -> b h i () d m', b = q.shape[0], i = q.shape[2]), (null_k, null_v))
+                k = torch.cat((null_k, k), dim = 3)
+                v = torch.cat((null_v, v), dim = 3)
 
             if exists(global_feats) and degree == '0':
                 global_k, global_v = map(lambda t: t[degree], (global_keys, global_values))
@@ -538,7 +546,7 @@ class OneHeadedKVAttentionSE3(nn.Module):
         assert not (linear_proj_keys and tie_key_values), 'you cannot do linear projection of keys and have shared key / values turned on at the same time'
 
         if linear_proj_keys:
-            self.to_k = LinearSE3(fiber, hidden_fiber)
+            self.to_k = LinearSE3(fiber, kv_hidden_fiber)
         elif not tie_key_values:
             self.to_k = ConvSE3(fiber, kv_hidden_fiber, edge_dim = edge_dim, pool = False, self_interaction = False, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, splits = splits)
         else:
@@ -569,7 +577,7 @@ class OneHeadedKVAttentionSE3(nn.Module):
             self.to_global_k = LinearSE3(global_input_fiber, global_output_fiber)
             self.to_global_v = LinearSE3(global_input_fiber, global_output_fiber)
 
-    def forward(self, features, edge_info, rel_dist, basis, global_feats = None):
+    def forward(self, features, edge_info, rel_dist, basis, global_feats = None, pos_emb = None):
         h, attend_self = self.heads, self.attend_self
         device, dtype = get_tensor_device_and_dtype(features)
         neighbor_indices, neighbor_mask, edges = edge_info
@@ -602,17 +610,24 @@ class OneHeadedKVAttentionSE3(nn.Module):
 
             q = rearrange(q, 'b i (h d) m -> b h i d m', h = h)
 
-            if self.use_null_kv:
-                null_k, null_v = map(lambda t: t[degree], (self.null_keys, self.null_values))
-                null_k, null_v = map(lambda t: repeat(t, 'd m -> b i () d m', b = q.shape[0], i = q.shape[2]), (null_k, null_v))
-                k = torch.cat((null_k, k), dim = 2)
-                v = torch.cat((null_v, v), dim = 2)
-
             if attend_self:
                 self_k, self_v = map(lambda t: t[degree], (self_keys, self_values))
                 self_k, self_v = map(lambda t: rearrange(t, 'b n d m -> b n () d m'), (self_k, self_v))
                 k = torch.cat((self_k, k), dim = 2)
                 v = torch.cat((self_v, v), dim = 2)
+
+            if exists(pos_emb) and degree == '0':
+                query_pos_emb, key_pos_emb = pos_emb
+                query_pos_emb = rearrange(query_pos_emb, 'b i d -> b () i d ()')
+                key_pos_emb = rearrange(key_pos_emb, 'b i j d -> b i j d ()')
+                q = apply_rotary_pos_emb(q, query_pos_emb)
+                k = apply_rotary_pos_emb(k, key_pos_emb)
+
+            if self.use_null_kv:
+                null_k, null_v = map(lambda t: t[degree], (self.null_keys, self.null_values))
+                null_k, null_v = map(lambda t: repeat(t, 'd m -> b i () d m', b = q.shape[0], i = q.shape[2]), (null_k, null_v))
+                k = torch.cat((null_k, k), dim = 2)
+                v = torch.cat((null_v, v), dim = 2)
 
             if exists(global_feats) and degree == '0':
                 global_k, global_v = map(lambda t: t[degree], (global_keys, global_values))
@@ -655,10 +670,10 @@ class AttentionBlockSE3(nn.Module):
         self.prenorm = NormSE3(fiber)
         self.residual = ResidualSE3()
 
-    def forward(self, features, edge_info, rel_dist, basis, global_feats = None):
+    def forward(self, features, edge_info, rel_dist, basis, global_feats = None, pos_emb = None):
         res = features
         outputs = self.prenorm(features)
-        outputs = self.attn(outputs, edge_info, rel_dist, basis, global_feats)
+        outputs = self.attn(outputs, edge_info, rel_dist, basis, global_feats, pos_emb)
         return self.residual(outputs, res)
 
 # main class
@@ -699,16 +714,30 @@ class SE3Transformer(nn.Module):
         global_feats_dim = None,
         linear_proj_keys = False,
         one_headed_key_values = False,
-        tie_key_values = False
+        tie_key_values = False,
+        rotary_position = False,
+        rotary_rel_dist = False
     ):
         super().__init__()
         dim_in = default(dim_in, dim)
         self.dim_in = cast_tuple(dim_in, input_degrees)
-
         self.dim = dim
 
-        self.token_emb = None
+        # token embedding
+
         self.token_emb = nn.Embedding(num_tokens, dim) if exists(num_tokens) else None
+
+        # positional embedding
+
+        self.rotary_rel_dist = rotary_rel_dist
+        self.rotary_position = rotary_position
+
+        self.rotary_pos_emb = None
+        if rotary_position or rotary_rel_dist:
+            num_rotaries = int(rotary_position) + int(rotary_rel_dist)
+            self.rotary_pos_emb = SinusoidalEmbeddings(dim_head // num_rotaries)
+
+        # edges
 
         assert not (exists(num_edge_tokens) and not exists(edge_dim)), 'edge dimension (edge_dim) must be supplied if SE3 transformer is to have edge tokens'
         self.edge_emb = nn.Embedding(num_edge_tokens, edge_dim) if exists(num_edge_tokens) else None
@@ -775,6 +804,8 @@ class SE3Transformer(nn.Module):
         assert not (reversible and self.accept_global_feats), 'reversibility and global features are not compatible'
 
         # trunk
+
+        self.attend_self = attend_self
 
         attention_klass = OneHeadedKVAttentionSE3 if one_headed_key_values else AttentionSE3
 
@@ -966,6 +997,37 @@ class SE3Transformer(nn.Module):
         if exists(edges):
             edges = batched_index_select(edges, nearest_indices, dim = 2)
 
+        # calculate rotary pos emb
+
+        rotary_pos_emb = None
+        rotary_query_pos_emb = None
+        rotary_key_pos_emb = None
+
+        if self.rotary_position:
+            seq = torch.arange(n, device = device)
+            seq_pos_emb = self.rotary_pos_emb(seq)
+            self_indices = torch.arange(neighbor_indices.shape[1], device = device)
+            self_indices = repeat(self_indices, 'i -> b i ()', b = b)
+            neighbor_indices_with_self = torch.cat((self_indices, neighbor_indices), dim = 2)
+            pos_emb = batched_index_select(seq_pos_emb, neighbor_indices_with_self, dim = 0)
+
+            rotary_key_pos_emb = pos_emb
+            rotary_query_pos_emb = repeat(seq_pos_emb, 'n d -> b n d', b = b)
+
+        if self.rotary_rel_dist:
+            neighbor_rel_dist_with_self = F.pad(neighbor_rel_dist, (1, 0), value = 0)
+            rel_dist_pos_emb = self.rotary_pos_emb(neighbor_rel_dist_with_self)
+            rotary_key_pos_emb = safe_cat(rotary_key_pos_emb, rel_dist_pos_emb, dim = -1)
+
+            query_dist = torch.zeros(n, device = device)
+            query_pos_emb = self.rotary_pos_emb(query_dist)
+            query_pos_emb = repeat(query_pos_emb, 'n d -> b n d', b = b)
+
+            rotary_query_pos_emb = safe_cat(rotary_query_pos_emb, query_pos_emb, dim = -1)
+
+        if exists(rotary_query_pos_emb) and exists(rotary_key_pos_emb):
+            rotary_pos_emb = (rotary_query_pos_emb, rotary_key_pos_emb)
+
         # calculate basis
 
         basis = get_basis(neighbor_rel_pos, num_degrees - 1, differentiable = self.differentiable_coors)
@@ -987,7 +1049,7 @@ class SE3Transformer(nn.Module):
 
         # transformer layers
 
-        x = self.net(x, edge_info = edge_info, rel_dist = neighbor_rel_dist, basis = basis, global_feats = global_feats)
+        x = self.net(x, edge_info = edge_info, rel_dist = neighbor_rel_dist, basis = basis, global_feats = global_feats, pos_emb = rotary_pos_emb)
 
         # project out
 

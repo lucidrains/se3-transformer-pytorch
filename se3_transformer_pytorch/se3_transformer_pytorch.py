@@ -946,7 +946,7 @@ class SE3Transformer(nn.Module):
 
         # rel_dist gets modified using adjacency or neighbor mask
 
-        modified_rel_dist = rel_dist
+        modified_rel_dist = rel_dist.clone()
         max_value = get_max_value(modified_rel_dist) # for masking out nodes from being considered as neighbors
 
         # neighbors
@@ -1015,7 +1015,7 @@ class SE3Transformer(nn.Module):
             rotary_query_pos_emb = repeat(seq_pos_emb, 'n d -> b n d', b = b)
 
         if self.rotary_rel_dist:
-            neighbor_rel_dist_with_self = F.pad(neighbor_rel_dist, (1, 0), value = 0)
+            neighbor_rel_dist_with_self = F.pad(neighbor_rel_dist, (1, 0), value = 0) * 1e2
             rel_dist_pos_emb = self.rotary_pos_emb(neighbor_rel_dist_with_self)
             rotary_key_pos_emb = safe_cat(rotary_key_pos_emb, rel_dist_pos_emb, dim = -1)
 

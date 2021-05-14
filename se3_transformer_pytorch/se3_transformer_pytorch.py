@@ -486,6 +486,7 @@ class AttentionSE3(nn.Module):
                 key_pos_emb = rearrange(key_pos_emb, 'b i j d -> b () i j d ()')
                 q = apply_rotary_pos_emb(q, query_pos_emb)
                 k = apply_rotary_pos_emb(k, key_pos_emb)
+                v = apply_rotary_pos_emb(v, key_pos_emb)
 
             if self.use_null_kv:
                 null_k, null_v = map(lambda t: t[degree], (self.null_keys, self.null_values))

@@ -694,6 +694,7 @@ class SE3Transformer(nn.Module):
         valid_radius = 1e5,
         reduce_dim_out = False,
         num_tokens = None,
+        num_positions = None,
         num_edge_tokens = None,
         edge_dim = None,
         reversible = False,
@@ -730,6 +731,9 @@ class SE3Transformer(nn.Module):
         self.token_emb = nn.Embedding(num_tokens, dim) if exists(num_tokens) else None
 
         # positional embedding
+
+        self.num_positions = num_positions
+        self.pos_emb = nn.Embedding(num_positions, dim) if exists(num_positions) else None
 
         self.rotary_rel_dist = rotary_rel_dist
         self.rotary_position = rotary_position
@@ -853,6 +857,11 @@ class SE3Transformer(nn.Module):
 
         if exists(self.token_emb):
             feats = self.token_emb(feats)
+
+        if exists(self.pos_emb):
+            assert feats.shape[1] <= self.num_positions, 'feature sequence length must be less than the number of positions given at init'
+            pos_emb = self.pos_emb(torch.arange(feats.shape[1], device = feats.device))
+            feats += rearrange(pos_emb, 'n d -> () n d')
 
         assert not (self.attend_sparse_neighbors and not exists(adj_mat)), 'adjacency matrix (adjacency_mat) or edges (edges) must be passed in'
         assert not (self.has_edges and not exists(edges)), 'edge embedding (num_edge_tokens & edge_dim) must be supplied if one were to train on edge types'

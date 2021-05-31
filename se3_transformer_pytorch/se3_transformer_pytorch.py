@@ -440,12 +440,10 @@ class AttentionSE3(nn.Module):
             self.to_global_k = LinearSE3(global_input_fiber, global_output_fiber)
             self.to_global_v = LinearSE3(global_input_fiber, global_output_fiber)
 
-    def forward(self, features, edge_info, rel_dist, basis, global_feats = None, pos_emb = None):
+    def forward(self, features, edge_info, rel_dist, basis, global_feats = None, pos_emb = None, mask = None):
         h, attend_self = self.heads, self.attend_self
         device, dtype = get_tensor_device_and_dtype(features)
         neighbor_indices, neighbor_mask, edges = edge_info
-
-        max_neg_value = -torch.finfo().max
 
         if exists(neighbor_mask):
             neighbor_mask = rearrange(neighbor_mask, 'b i j -> b () i j')
@@ -505,7 +503,7 @@ class AttentionSE3(nn.Module):
             if exists(neighbor_mask):
                 num_left_pad = sim.shape[-1] - neighbor_mask.shape[-1]
                 mask = F.pad(neighbor_mask, (num_left_pad, 0), value = True)
-                sim.masked_fill_(~mask, max_neg_value)
+                sim.masked_fill_(~mask, -torch.finfo(sim.dtype).max)
 
             attn = sim.softmax(dim = -1)
             out = einsum('b h i j, b h i j d m -> b h i d m', attn, v)
@@ -578,12 +576,10 @@ class OneHeadedKVAttentionSE3(nn.Module):
             self.to_global_k = LinearSE3(global_input_fiber, global_output_fiber)
             self.to_global_v = LinearSE3(global_input_fiber, global_output_fiber)
 
-    def forward(self, features, edge_info, rel_dist, basis, global_feats = None, pos_emb = None):
+    def forward(self, features, edge_info, rel_dist, basis, global_feats = None, pos_emb = None, mask = None):
         h, attend_self = self.heads, self.attend_self
         device, dtype = get_tensor_device_and_dtype(features)
         neighbor_indices, neighbor_mask, edges = edge_info
-
-        max_neg_value = -torch.finfo().max
 
         if exists(neighbor_mask):
             neighbor_mask = rearrange(neighbor_mask, 'b i j -> b () i j')
@@ -642,13 +638,60 @@ class OneHeadedKVAttentionSE3(nn.Module):
             if exists(neighbor_mask):
                 num_left_pad = sim.shape[-1] - neighbor_mask.shape[-1]
                 mask = F.pad(neighbor_mask, (num_left_pad, 0), value = True)
-                sim.masked_fill_(~mask, max_neg_value)
+                sim.masked_fill_(~mask, -torch.finfo(sim.dtype).max)
 
             attn = sim.softmax(dim = -1)
             out = einsum('b h i j, b i j d m -> b h i d m', attn, v)
             outputs[degree] = rearrange(out, 'b h n d m -> b n (h d) m')
 
         return self.to_out(outputs)
+
+# global linear attention - only for type 0
+
+class GlobalLinearAttention(nn.Module):
+    def __init__(
+        self,
+        fiber,
+        dim_head = 64,
+        heads = 8,
+        **kwargs
+    ):
+        super().__init__()
+        inner_dim = dim_head * heads
+        self.scale = dim_head ** -0.5
+        self.heads = heads
+
+        self.to_qkv = nn.Linear(fiber[0], inner_dim * 3, bias = False)
+        self.to_out = nn.Linear(inner_dim, fiber[0])
+
+    def forward(self, features, edge_info, rel_dist, basis, global_feats = None, pos_emb = None, mask = None):
+        h = self.heads
+        device, dtype = get_tensor_device_and_dtype(features)
+
+        x = features['0'] # only working on type 0 features for global linear attention
+        x = rearrange(x, '... () -> ...')
+
+        q, k, v = self.to_qkv(x).chunk(3, dim = -1)
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), (q, k, v))
+
+        if exists(mask):
+            mask = rearrange(mask, 'b n -> b () n ()')
+            k.masked_fill_(~mask, -torch.finfo(k.dtype).max)
+            v.masked_fill_(~mask, 0.)
+
+        q = q.softmax(dim = -1)
+        k = k.softmax(dim = -2)
+
+        q *= self.scale
+
+        context = einsum('b h n d, b h n e -> b h d e', k, v)
+        attn_out = einsum('b h d e, b h n d -> b h n e', context, q)
+        attn_out = rearrange(attn_out, 'b h n d -> b n (h d)')
+        attn_out = self.to_out(attn_out)
+
+        out = map_values(lambda *args: 0, features)
+        out['0'] = rearrange(attn_out, '... -> ... ()')
+        return out
 
 class AttentionBlockSE3(nn.Module):
     def __init__(
@@ -672,10 +715,10 @@ class AttentionBlockSE3(nn.Module):
         self.prenorm = NormSE3(fiber)
         self.residual = ResidualSE3()
 
-    def forward(self, features, edge_info, rel_dist, basis, global_feats = None, pos_emb = None):
+    def forward(self, features, edge_info, rel_dist, basis, global_feats = None, pos_emb = None, mask = None):
         res = features
         outputs = self.prenorm(features)
-        outputs = self.attn(outputs, edge_info, rel_dist, basis, global_feats, pos_emb)
+        outputs = self.attn(outputs, edge_info, rel_dist, basis, global_feats, pos_emb, mask)
         return self.residual(outputs, res)
 
 # main class
@@ -719,7 +762,8 @@ class SE3Transformer(nn.Module):
         one_headed_key_values = False,
         tie_key_values = False,
         rotary_position = False,
-        rotary_rel_dist = False
+        rotary_rel_dist = False,
+        global_linear_attn_every = 0
     ):
         super().__init__()
         dim_in = default(dim_in, dim)
@@ -813,10 +857,13 @@ class SE3Transformer(nn.Module):
 
         self.attend_self = attend_self
 
-        attention_klass = OneHeadedKVAttentionSE3 if one_headed_key_values else AttentionSE3
+        default_attention_klass = OneHeadedKVAttentionSE3 if one_headed_key_values else AttentionSE3
 
         layers = nn.ModuleList([])
-        for _ in range(depth):
+        for ind in range(depth):
+            use_global_linear_attn = global_linear_attn_every > 0 and (ind % global_linear_attn_every) == 0
+            attention_klass = default_attention_klass if not use_global_linear_attn else GlobalLinearAttention
+
             layers.append(nn.ModuleList([
                 AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, rel_dist_num_fourier_features = rel_dist_num_fourier_features, use_null_kv = use_null_kv, splits = splits, global_feats_dim = global_feats_dim, linear_proj_keys = linear_proj_keys, attention_klass = attention_klass, tie_key_values = tie_key_values),
                 FeedForwardBlockSE3(fiber_hidden)
@@ -1060,7 +1107,7 @@ class SE3Transformer(nn.Module):
 
         # transformer layers
 
-        x = self.net(x, edge_info = edge_info, rel_dist = neighbor_rel_dist, basis = basis, global_feats = global_feats, pos_emb = rotary_pos_emb)
+        x = self.net(x, edge_info = edge_info, rel_dist = neighbor_rel_dist, basis = basis, global_feats = global_feats, pos_emb = rotary_pos_emb, mask = _mask)
 
         # project out
 

@@ -121,7 +121,10 @@ class NormSE3(nn.Module):
         # Norm mappings: 1 per feature type
         self.transform = nn.ModuleDict()
         for degree, chan in fiber:
-            self.transform[str(degree)] = nn.Sequential(nn.LayerNorm(chan), nonlin)
+            self.transform[str(degree)] = nn.ParameterDict({
+                'scale': nn.Parameter(torch.ones(1, 1, chan)),
+                'bias': nn.Parameter(torch.zeros(1, 1, chan))
+            })
 
     def forward(self, features):
         output = {}
@@ -131,8 +134,12 @@ class NormSE3(nn.Module):
             phase = t / norm
 
             # Transform on norms
-            fn = self.transform[degree]
-            transformed = fn(norm.squeeze(-1))[..., None]
+            parameters = self.transform[degree]
+            scale, bias = parameters['scale'], parameters['bias']
+
+            transformed = rearrange(norm, '... () -> ...')
+            transformed = self.nonlin(transformed * scale + bias)
+            transformed = rearrange(transformed, '... -> ... ()')
 
             # Nonlinearity on norm
             output[degree] = (transformed * phase).view(*t.shape)

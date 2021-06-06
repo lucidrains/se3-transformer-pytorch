@@ -782,7 +782,8 @@ class SE3Transformer(nn.Module):
         global_linear_attn_every = 0,
         norm_gated_scale = False,
         use_egnn = False,
-        egnn_hidden_dim = 32
+        egnn_hidden_dim = 32,
+        egnn_weights_clamp_value = None
     ):
         super().__init__()
         dim_in = default(dim_in, dim)
@@ -881,7 +882,7 @@ class SE3Transformer(nn.Module):
         default_attention_klass = OneHeadedKVAttentionSE3 if one_headed_key_values else AttentionSE3
 
         if use_egnn:
-            self.net = EGnnNetwork(fiber = fiber_hidden, depth = depth, edge_dim = edge_dim, hidden_dim = egnn_hidden_dim)
+            self.net = EGnnNetwork(fiber = fiber_hidden, depth = depth, edge_dim = edge_dim, hidden_dim = egnn_hidden_dim, coor_weights_clamp_value = egnn_weights_clamp_value)
         else:
             layers = nn.ModuleList([])
             for ind in range(depth):

@@ -77,7 +77,7 @@ class EGNN(nn.Module):
         hidden_dim = 32,
         edge_dim = 0,
         init_eps = 1e-3,
-        coor_weights_clamp_value = 2
+        coor_weights_clamp_value = None
     ):
         super().__init__()
         self.fiber = fiber
@@ -182,6 +182,11 @@ class EGNN(nn.Module):
         # to coordinates
 
         htype_weights = self.htypes_mlp(m_ij)
+
+        if exists(self.coor_weights_clamp_value):
+            clamp_value = self.coor_weights_clamp_value
+            htype_weights.clamp_(min = -clamp_value, max = clamp_value)
+
         split_htype_weights = htype_weights.split(htype_dims, dim = -1)
 
         htype_updates = []
@@ -230,13 +235,13 @@ class EGnnNetwork(nn.Module):
         depth,
         edge_dim = 0,
         hidden_dim = 32,
-        coor_weights_clamp_value = 2
+        coor_weights_clamp_value = None
     ):
         super().__init__()
         self.fiber = fiber
         self.layers = nn.ModuleList([])
         for _ in range(depth):
-            self.layers.append(EGNN(fiber = fiber, edge_dim = edge_dim, hidden_dim = hidden_dim))
+            self.layers.append(EGNN(fiber = fiber, edge_dim = edge_dim, hidden_dim = hidden_dim, coor_weights_clamp_value = coor_weights_clamp_value))
 
     def forward(
         self,

@@ -7,10 +7,9 @@ import torch.nn.functional as F
 from torch import nn, einsum
 
 from se3_transformer_pytorch.basis import get_basis
-from se3_transformer_pytorch.utils import exists, default, uniq, map_values, batched_index_select, masked_mean, to_order, fourier_encode, cast_tuple, safe_cat, fast_split, rand_uniform
+from se3_transformer_pytorch.utils import exists, default, uniq, map_values, batched_index_select, masked_mean, to_order, fourier_encode, cast_tuple, safe_cat, fast_split, rand_uniform, broadcat
 from se3_transformer_pytorch.reversible import ReversibleSequence, SequentialSequence
 from se3_transformer_pytorch.rotary import SinusoidalEmbeddings, apply_rotary_pos_emb
-from se3_transformer_pytorch.egnn import EGnnNetwork
 
 from einops import rearrange, repeat
 
@@ -737,6 +736,249 @@ class AttentionBlockSE3(nn.Module):
         outputs = self.attn(outputs, edge_info, rel_dist, basis, global_feats, pos_emb, mask)
         return self.residual(outputs, res)
 
+# egnn
+
+class Swish_(nn.Module):
+    def forward(self, x):
+        return x * x.sigmoid()
+
+SiLU = nn.SiLU if hasattr(nn, 'SiLU') else Swish_
+
+class HtypesNorm(nn.Module):
+    def __init__(self, dim, eps = 1e-8, scale_init = 1e-2, bias_init = 1e-2):
+        super().__init__()
+        self.eps = eps
+        scale = torch.empty(1, 1, 1, dim, 1).fill_(scale_init)
+        bias = torch.empty(1, 1, 1, dim, 1).fill_(bias_init)
+        self.scale = nn.Parameter(scale)
+        self.bias = nn.Parameter(bias)
+
+    def forward(self, coors):
+        norm = coors.norm(dim = -1, keepdim = True)
+        normed_coors = coors / norm.clamp(min = self.eps)
+        return normed_coors * (norm * self.scale + self.bias)
+
+class EGNN(nn.Module):
+    def __init__(
+        self,
+        fiber,
+        hidden_dim = 32,
+        edge_dim = 0,
+        init_eps = 1e-3,
+        coor_weights_clamp_value = None
+    ):
+        super().__init__()
+        self.fiber = fiber
+        node_dim = fiber[0]
+
+        htypes = list(filter(lambda t: t.degrees != 0, fiber))
+        num_htypes = len(htypes)
+        htype_dims = sum([fiberel.dim for fiberel in htypes])
+
+        edge_input_dim = node_dim * 2 + htype_dims + edge_dim + 1
+
+        self.node_norm = nn.LayerNorm(node_dim)
+
+        self.edge_mlp = nn.Sequential(
+            nn.Linear(edge_input_dim, edge_input_dim * 2),
+            SiLU(),
+            nn.Linear(edge_input_dim * 2, hidden_dim),
+            SiLU()
+        )
+
+        self.htype_norms = nn.ModuleDict([])
+
+        for degree, dim in fiber:
+            if degree == 0:
+                continue
+            self.htype_norms[str(degree)] = HtypesNorm(dim)
+
+        self.htypes_mlp = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim * 4),
+            SiLU(),
+            nn.Linear(hidden_dim * 4, htype_dims)
+        )
+
+        self.node_mlp = nn.Sequential(
+            nn.Linear(node_dim + hidden_dim, node_dim * 2),
+            SiLU(),
+            nn.Linear(node_dim * 2, node_dim)
+        )
+
+        self.coor_weights_clamp_value = coor_weights_clamp_value
+        self.init_eps = init_eps
+        self.apply(self.init_)
+
+    def init_(self, module):
+        if type(module) in {nn.Linear}:
+            nn.init.normal_(module.weight, std = self.init_eps)
+
+    def forward(
+        self,
+        features,
+        edge_info,
+        rel_dist,
+        mask = None,
+        **kwargs
+    ):
+        neighbor_indices, neighbor_masks, edges = edge_info
+
+        mask = neighbor_masks
+
+        # type 0 features
+
+        nodes = features['0']
+        nodes = rearrange(nodes, '... () -> ...')
+
+        # higher types (htype)
+
+        htypes = list(filter(lambda t: t[0] != '0', features.items()))
+        htype_degrees = list(map(lambda t: t[0], htypes))
+        htype_dims = list(map(lambda t: t[1].shape[-2], htypes))
+
+        # prepare higher types
+
+        rel_htypes = []
+        rel_htypes_dists = []
+
+        for degree, htype in htypes:
+            rel_htype = rearrange(htype, 'b i d m -> b i () d m') - rearrange(htype, 'b j d m -> b () j d m')
+            rel_htype_dist = rel_htype.norm(dim = -1)
+
+            rel_htypes.append(rel_htype)
+            rel_htypes_dists.append(rel_htype_dist)
+
+        # prepare edges for edge MLP
+
+        nodes_i = rearrange(nodes, 'b i d -> b i () d')
+        nodes_j = batched_index_select(nodes, neighbor_indices, dim = 1)
+        neighbor_higher_type_dists = map(lambda t: batched_index_select(t, neighbor_indices, dim = 2), rel_htypes_dists)
+        coor_rel_dist = rearrange(rel_dist, 'b i j -> b i j ()')
+
+        edge_mlp_inputs = broadcat((nodes_i, nodes_j, *neighbor_higher_type_dists, coor_rel_dist), dim = -1)
+
+        if exists(edges):
+            edge_mlp_inputs = torch.cat((edge_mlp_inputs, edges), dim = -1)
+
+        # get intermediate representation
+
+        m_ij = self.edge_mlp(edge_mlp_inputs)
+
+        # to coordinates
+
+        htype_weights = self.htypes_mlp(m_ij)
+
+        if exists(self.coor_weights_clamp_value):
+            clamp_value = self.coor_weights_clamp_value
+            htype_weights.clamp_(min = -clamp_value, max = clamp_value)
+
+        split_htype_weights = htype_weights.split(htype_dims, dim = -1)
+
+        htype_updates = []
+
+        if exists(mask):
+            htype_mask = rearrange(mask, 'b i j -> b i j ()')
+            htype_weights = htype_weights.masked_fill(~htype_mask, 0.)
+
+        for degree, rel_htype, htype_weight in zip(htype_degrees, rel_htypes, split_htype_weights):
+            normed_rel_htype = self.htype_norms[str(degree)](rel_htype)
+            normed_rel_htype = batched_index_select(normed_rel_htype, neighbor_indices, dim = 2)
+
+            htype_update = einsum('b i j d m, b i j d -> b i d m', normed_rel_htype, htype_weight)
+            htype_updates.append(htype_update)
+
+        # to nodes
+
+        if exists(mask):
+            m_ij_mask = rearrange(mask, '... -> ... ()')
+            m_ij = m_ij.masked_fill(~m_ij_mask, 0.)
+
+        m_i = m_ij.sum(dim = -2)
+
+        normed_nodes = self.node_norm(nodes)
+        node_mlp_input = torch.cat((normed_nodes, m_i), dim = -1)
+        node_out = self.node_mlp(node_mlp_input) + nodes
+
+        # update nodes
+
+        features['0'] = rearrange(node_out, '... -> ... ()')
+
+        # update higher types
+
+        update_htype_dicts = dict(zip(htype_degrees, htype_updates))
+
+        for degree, update_htype in update_htype_dicts.items():
+            features[degree] = features[degree] + update_htype
+
+        return features
+
+class EGnnNetwork(nn.Module):
+    def __init__(
+        self,
+        *,
+        fiber,
+        depth,
+        edge_dim = 0,
+        hidden_dim = 32,
+        coor_weights_clamp_value = None,
+        feedforward = False
+    ):
+        super().__init__()
+        self.fiber = fiber
+        self.layers = nn.ModuleList([])
+        for _ in range(depth):
+            self.layers.append(nn.ModuleList([
+                EGNN(fiber = fiber, edge_dim = edge_dim, hidden_dim = hidden_dim, coor_weights_clamp_value = coor_weights_clamp_value),
+                FeedForwardBlockSE3(fiber) if feedforward else None
+            ]))
+
+    def forward(
+        self,
+        features,
+        edge_info,
+        rel_dist,
+        basis,
+        global_feats = None,
+        pos_emb = None,
+        mask = None,
+        **kwargs
+    ):
+        neighbor_indices, neighbor_masks, edges = edge_info
+        device = neighbor_indices.device
+
+        # modify neighbors to include self (since se3 transformer depends on removing attention to token self, but this does not apply for EGNN)
+
+        self_indices = torch.arange(neighbor_indices.shape[1], device = device)
+        self_indices = rearrange(self_indices, 'i -> () i ()')
+        neighbor_indices = broadcat((self_indices, neighbor_indices), dim = -1)
+
+        neighbor_masks = F.pad(neighbor_masks, (1, 0), value = True)
+        rel_dist = F.pad(rel_dist, (1, 0), value = 0.)
+
+        if exists(edges):
+            edges = F.pad(edges, (0, 0, 1, 0), value = 0.)  # make edge of token to itself 0 for now
+
+        edge_info = (neighbor_indices, neighbor_masks, edges)
+
+        # go through layers
+
+        for egnn, ff in self.layers:
+            features = egnn(
+                features,
+                edge_info = edge_info,
+                rel_dist = rel_dist,
+                basis = basis,
+                global_feats = global_feats,
+                pos_emb = pos_emb,
+                mask = mask,
+                **kwargs
+            )
+
+            if exists(ff):
+                features = ff(features)
+
+        return features
+
 # main class
 
 class SE3Transformer(nn.Module):
@@ -783,7 +1025,8 @@ class SE3Transformer(nn.Module):
         norm_gated_scale = False,
         use_egnn = False,
         egnn_hidden_dim = 32,
-        egnn_weights_clamp_value = None
+        egnn_weights_clamp_value = None,
+        egnn_feedforward = False
     ):
         super().__init__()
         dim_in = default(dim_in, dim)
@@ -882,7 +1125,7 @@ class SE3Transformer(nn.Module):
         default_attention_klass = OneHeadedKVAttentionSE3 if one_headed_key_values else AttentionSE3
 
         if use_egnn:
-            self.net = EGnnNetwork(fiber = fiber_hidden, depth = depth, edge_dim = edge_dim, hidden_dim = egnn_hidden_dim, coor_weights_clamp_value = egnn_weights_clamp_value)
+            self.net = EGnnNetwork(fiber = fiber_hidden, depth = depth, edge_dim = edge_dim, hidden_dim = egnn_hidden_dim, coor_weights_clamp_value = egnn_weights_clamp_value, feedforward = egnn_feedforward)
         else:
             layers = nn.ModuleList([])
             for ind in range(depth):

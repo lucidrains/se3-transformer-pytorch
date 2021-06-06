@@ -1,5 +1,6 @@
 import torch
 from torch import nn, einsum
+import torch.nn.functional as F
 
 from einops import rearrange
 from einops.layers.torch import Rearrange
@@ -137,6 +138,8 @@ class EGNN(nn.Module):
     ):
         neighbor_indices, neighbor_masks, edges = edge_info
 
+        mask = neighbor_masks
+
         # type 0 features
 
         nodes = features['0']
@@ -147,11 +150,6 @@ class EGNN(nn.Module):
         htypes = list(filter(lambda t: t[0] != '0', features.items()))
         htype_degrees = list(map(lambda t: t[0], htypes))
         htype_dims = list(map(lambda t: t[1].shape[-2], htypes))
-
-        # prepare mask
-
-        if exists(mask):
-            mask = batched_index_select(mask, neighbor_indices, dim = 1)
 
         # prepare higher types
 
@@ -256,6 +254,25 @@ class EGnnNetwork(nn.Module):
         mask = None,
         **kwargs
     ):
+        neighbor_indices, neighbor_masks, edges = edge_info
+        device = neighbor_indices.device
+
+        # modify neighbors to include self (since se3 transformer depends on removing attention to token self, but this does not apply for EGNN)
+
+        self_indices = torch.arange(neighbor_indices.shape[1], device = device)
+        self_indices = rearrange(self_indices, 'i -> () i ()')
+        neighbor_indices = broadcat((self_indices, neighbor_indices), dim = -1)
+
+        neighbor_masks = F.pad(neighbor_masks, (1, 0), value = True)
+        rel_dist = F.pad(rel_dist, (1, 0), value = 0.)
+
+        if exists(edges):
+            edges = F.pad(edges, (0, 0, 1, 0), value = 0.)  # make edge of token to itself 0 for now
+
+        edge_info = (neighbor_indices, neighbor_masks, edges)
+
+        # go through layers
+
         for layer in self.layers:
             features = layer(
                 features,

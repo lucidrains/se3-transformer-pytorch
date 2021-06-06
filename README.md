@@ -405,7 +405,7 @@ out = model(feats, coors, mask, return_type = 0)
 
 ### Using EGNN
 
-This is an experimental version of EGNN that works for higher types, and greater dimensionality than just 1 (for the coordinates).
+This is an experimental version of EGNN that works for higher types, and greater dimensionality than just 1 (for the coordinates). The class name is still `SE3Transformer` since it reuses some preexisting logic, so just ignore that for now until I clean it up later.
 
 ```python
 import torch

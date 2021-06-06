@@ -10,6 +10,7 @@ from se3_transformer_pytorch.basis import get_basis
 from se3_transformer_pytorch.utils import exists, default, uniq, map_values, batched_index_select, masked_mean, to_order, fourier_encode, cast_tuple, safe_cat, fast_split, rand_uniform
 from se3_transformer_pytorch.reversible import ReversibleSequence, SequentialSequence
 from se3_transformer_pytorch.rotary import SinusoidalEmbeddings, apply_rotary_pos_emb
+from se3_transformer_pytorch.egnn import EGnnNetwork
 
 from einops import rearrange, repeat
 
@@ -779,7 +780,9 @@ class SE3Transformer(nn.Module):
         rotary_position = False,
         rotary_rel_dist = False,
         global_linear_attn_every = 0,
-        norm_gated_scale = False
+        norm_gated_scale = False,
+        use_egnn = False,
+        egnn_hidden_dim = 32
     ):
         super().__init__()
         dim_in = default(dim_in, dim)
@@ -811,6 +814,8 @@ class SE3Transformer(nn.Module):
 
         self.input_degrees = input_degrees
         self.num_degrees = num_degrees
+
+        output_degrees = output_degrees if not use_egnn else None
         self.output_degrees = output_degrees
 
         # whether to differentiate through basis, needed for alphafold2
@@ -842,7 +847,7 @@ class SE3Transformer(nn.Module):
 
         fiber_in     = Fiber.create(input_degrees, dim_in)
         fiber_hidden = Fiber.create(num_degrees, dim)
-        fiber_out    = Fiber.create(output_degrees, dim_out)
+        fiber_out    = Fiber.create(output_degrees, dim_out) if exists(output_degrees) else None
 
         conv_kwargs = dict(edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, splits = splits)
 
@@ -875,28 +880,34 @@ class SE3Transformer(nn.Module):
 
         default_attention_klass = OneHeadedKVAttentionSE3 if one_headed_key_values else AttentionSE3
 
-        layers = nn.ModuleList([])
-        for ind in range(depth):
-            use_global_linear_attn = global_linear_attn_every > 0 and (ind % global_linear_attn_every) == 0
-            attention_klass = default_attention_klass if not use_global_linear_attn else GlobalLinearAttention
+        if use_egnn:
+            self.net = EGnnNetwork(fiber = fiber_hidden, depth = depth, edge_dim = edge_dim, hidden_dim = egnn_hidden_dim)
+        else:
+            layers = nn.ModuleList([])
+            for ind in range(depth):
+                use_global_linear_attn = global_linear_attn_every > 0 and (ind % global_linear_attn_every) == 0
+                attention_klass = default_attention_klass if not use_global_linear_attn else GlobalLinearAttention
 
-            layers.append(nn.ModuleList([
-                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, rel_dist_num_fourier_features = rel_dist_num_fourier_features, use_null_kv = use_null_kv, splits = splits, global_feats_dim = global_feats_dim, linear_proj_keys = linear_proj_keys, attention_klass = attention_klass, tie_key_values = tie_key_values, norm_gated_scale = norm_gated_scale),
-                FeedForwardBlockSE3(fiber_hidden, norm_gated_scale = norm_gated_scale)
-            ]))
+                layers.append(nn.ModuleList([
+                    AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, rel_dist_num_fourier_features = rel_dist_num_fourier_features, use_null_kv = use_null_kv, splits = splits, global_feats_dim = global_feats_dim, linear_proj_keys = linear_proj_keys, attention_klass = attention_klass, tie_key_values = tie_key_values, norm_gated_scale = norm_gated_scale),
+                    FeedForwardBlockSE3(fiber_hidden, norm_gated_scale = norm_gated_scale)
+                ]))
 
-        execution_class = ReversibleSequence if reversible else SequentialSequence
-        self.net = execution_class(layers)
+            execution_class = ReversibleSequence if reversible else SequentialSequence
+            self.net = execution_class(layers)
 
         # out
 
-        self.conv_out = ConvSE3(fiber_hidden, fiber_out, **conv_kwargs)
+        self.conv_out = ConvSE3(fiber_hidden, fiber_out, **conv_kwargs) if exists(fiber_out) else None
 
-        self.norm = NormSE3(fiber_out, gated_scale = norm_gated_scale, nonlin = nn.Identity()) if norm_out or reversible else nn.Identity()
+        self.norm = NormSE3(fiber_out, gated_scale = norm_gated_scale, nonlin = nn.Identity()) if (norm_out or reversible) and exists(fiber_out) else nn.Identity()
+
+        final_degree = default(output_degrees, num_degrees)
+        final_fiber = default(fiber_out, fiber_hidden)
 
         self.linear_out = LinearSE3(
-            fiber_out,
-            Fiber.create(output_degrees, 1)
+            final_fiber,
+            Fiber.create(final_degree, 1)
         ) if reduce_dim_out else None
 
     def forward(
@@ -1127,7 +1138,8 @@ class SE3Transformer(nn.Module):
 
         # project out
 
-        x = self.conv_out(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
+        if exists(self.conv_out):
+            x = self.conv_out(x, edge_info, rel_dist = neighbor_rel_dist, basis = basis)
 
         # norm
 

@@ -403,6 +403,36 @@ mask  = torch.ones(1, 32).bool().cuda()
 out = model(feats, coors, mask, return_type = 0)
 ```
 
+### Using EGNN
+
+This is an experimental version of EGNN that works for higher types, and greater dimensionality than just 1 (for the coordinates).
+
+```python
+import torch
+from se3_transformer_pytorch import SE3Transformer
+
+model = SE3Transformer(
+    dim = 32,
+    num_neighbors = 8,
+    num_edge_tokens = 4,
+    edge_dim = 4,
+    num_degrees = 4,       # number of higher order types - will use basis on a TCN to project to these dimensions
+    use_egnn = True,       # set this to true to use EGNN instead of equivariant attention layers
+    egnn_hidden_dim = 64,  # egnn hidden dimension
+    depth = 4,             # depth of EGNN
+    reduce_dim_out = True  # will project the dimension of the higher types to 1
+).cuda()
+
+feats = torch.randn(2, 32, 32).cuda()
+coors = torch.randn(2, 32, 3).cuda()
+bonds = torch.randint(0, 4, (2, 32, 32)).cuda()
+mask  = torch.ones(2, 32).bool().cuda()
+
+refinement = model(feats, coors, mask, edges = bonds, return_type = 1) # (2, 32, 3)
+
+coors = coors + refinement  # update coors with refinement
+```
+
 ## Scaling (wip)
 
 This section will list ongoing efforts to make SE3 Transformer scale a little better.
@@ -482,6 +512,17 @@ This library is largely a port of <a href="https://github.com/FabianFuchsML/se3-
     author  = {Fabian B. Fuchs and Daniel E. Worrall and Volker Fischer and Max Welling},
     year    = {2020},
     eprint  = {2006.10503},
+    archivePrefix = {arXiv},
+    primaryClass = {cs.LG}
+}
+```
+
+```bibtex
+@misc{satorras2021en,
+    title   = {E(n) Equivariant Graph Neural Networks},
+    author  = {Victor Garcia Satorras and Emiel Hoogeboom and Max Welling},
+    year    = {2021},
+    eprint  = {2102.09844},
     archivePrefix = {arXiv},
     primaryClass = {cs.LG}
 }

@@ -161,6 +161,29 @@ def test_equivariance():
     diff = (out1 - out2).max()
     assert diff < 1e-4, 'is not equivariant'
 
+def test_equivariance_with_egnn_backbone():
+    model = SE3Transformer(
+        dim = 64,
+        depth = 1,
+        attend_self = True,
+        num_neighbors = 4,
+        num_degrees = 2,
+        output_degrees = 2,
+        fourier_encode_dist = True,
+        use_egnn = True
+    )
+
+    feats = torch.randn(1, 32, 64)
+    coors = torch.randn(1, 32, 3)
+    mask  = torch.ones(1, 32).bool()
+
+    R   = rot(15, 0, 45)
+    out1 = model(feats, coors @ R, mask, return_type = 1)
+    out2 = model(feats, coors, mask, return_type = 1) @ R
+
+    diff = (out1 - out2).max()
+    assert diff < 1e-4, 'is not equivariant'
+
 def test_equivariance_with_global_linear_attn():
     model = SE3Transformer(
         dim = 64,

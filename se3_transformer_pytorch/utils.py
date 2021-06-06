@@ -35,7 +35,6 @@ def safe_cat(arr, el, dim):
 def cast_tuple(val, depth):
     return val if isinstance(val, tuple) else (val,) * depth
 
-
 def batched_index_select(values, indices, dim = 1):
     value_dims = values.shape[(dim + 1):]
     values_shape, indices_shape = map(lambda t: list(t.shape), (values, indices))
@@ -61,6 +60,9 @@ def masked_mean(tensor, mask, dim = -1):
     mean = tensor.sum(dim = dim) / total_el.clamp(min = 1.)
     mean.masked_fill_(total_el == 0, 0.)
     return mean
+
+def rand_uniform(size, min_val, max_val):
+    return torch.empty(size).uniform_(min_val, max_val)
 
 def fast_split(arr, splits, dim=0):
     axis_len = arr.shape[dim]

@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch import nn, einsum
 
 from se3_transformer_pytorch.basis import get_basis
-from se3_transformer_pytorch.utils import exists, default, uniq, map_values, batched_index_select, masked_mean, to_order, fourier_encode, cast_tuple, safe_cat, fast_split
+from se3_transformer_pytorch.utils import exists, default, uniq, map_values, batched_index_select, masked_mean, to_order, fourier_encode, cast_tuple, safe_cat, fast_split, rand_uniform
 from se3_transformer_pytorch.reversible import ReversibleSequence, SequentialSequence
 from se3_transformer_pytorch.rotary import SinusoidalEmbeddings, apply_rotary_pos_emb
 
@@ -111,7 +111,8 @@ class NormSE3(nn.Module):
         self,
         fiber,
         nonlin = nn.GELU(),
-        eps = 1e-12
+        gated_scale = False,
+        eps = 1e-12,
     ):
         super().__init__()
         self.fiber = fiber
@@ -122,8 +123,9 @@ class NormSE3(nn.Module):
         self.transform = nn.ModuleDict()
         for degree, chan in fiber:
             self.transform[str(degree)] = nn.ParameterDict({
-                'scale': nn.Parameter(torch.ones(1, 1, chan)),
-                'bias': nn.Parameter(torch.zeros(1, 1, chan))
+                'scale': nn.Parameter(torch.ones(1, 1, chan)) if not gated_scale else None,
+                'bias': nn.Parameter(rand_uniform((1, 1, chan), -1e-3, 1e-3)),
+                'w_gate': nn.Parameter(rand_uniform_((chan, chan), -1e-3, 1e-3)) if gated_scale else None
             })
 
     def forward(self, features):
@@ -135,9 +137,13 @@ class NormSE3(nn.Module):
 
             # Transform on norms
             parameters = self.transform[degree]
-            scale, bias = parameters['scale'], parameters['bias']
+            gate_weights, bias, scale = parameters['w_gate'], parameters['bias'], parameters['scale']
 
             transformed = rearrange(norm, '... () -> ...')
+
+            if not exists(scale):
+                scale = einsum('b n d, d e -> b n e', transformed, gate_weights)
+
             transformed = self.nonlin(transformed * scale + bias)
             transformed = rearrange(transformed, '... -> ... ()')
 
@@ -369,10 +375,11 @@ class FeedForwardBlockSE3(nn.Module):
     def __init__(
         self,
         fiber,
+        norm_gated_scale = False
     ):
         super().__init__()
         self.fiber = fiber
-        self.prenorm = NormSE3(fiber)
+        self.prenorm = NormSE3(fiber, gated_scale = norm_gated_scale)
         self.feedforward = FeedForwardSE3(fiber)
         self.residual = ResidualSE3()
 
@@ -715,11 +722,12 @@ class AttentionBlockSE3(nn.Module):
         global_feats_dim = False,
         linear_proj_keys = False,
         tie_key_values = False,
-        attention_klass = AttentionSE3
+        attention_klass = AttentionSE3,
+        norm_gated_scale = False
     ):
         super().__init__()
         self.attn = attention_klass(fiber, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, use_null_kv = use_null_kv, rel_dist_num_fourier_features = rel_dist_num_fourier_features, fourier_encode_dist =fourier_encode_dist, splits = splits, global_feats_dim = global_feats_dim, linear_proj_keys = linear_proj_keys, tie_key_values = tie_key_values)
-        self.prenorm = NormSE3(fiber)
+        self.prenorm = NormSE3(fiber, gated_scale = norm_gated_scale)
         self.residual = ResidualSE3()
 
     def forward(self, features, edge_info, rel_dist, basis, global_feats = None, pos_emb = None, mask = None):
@@ -770,7 +778,8 @@ class SE3Transformer(nn.Module):
         tie_key_values = False,
         rotary_position = False,
         rotary_rel_dist = False,
-        global_linear_attn_every = 0
+        global_linear_attn_every = 0,
+        norm_gated_scale = False
     ):
         super().__init__()
         dim_in = default(dim_in, dim)
@@ -852,7 +861,7 @@ class SE3Transformer(nn.Module):
         for _ in range(num_conv_layers):
             self.convs.append(nn.ModuleList([
                 ConvSE3(fiber_hidden, fiber_hidden, **conv_kwargs),
-                NormSE3(fiber_hidden)
+                NormSE3(fiber_hidden, gated_scale = norm_gated_scale)
             ]))
 
         # global features
@@ -872,8 +881,8 @@ class SE3Transformer(nn.Module):
             attention_klass = default_attention_klass if not use_global_linear_attn else GlobalLinearAttention
 
             layers.append(nn.ModuleList([
-                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, rel_dist_num_fourier_features = rel_dist_num_fourier_features, use_null_kv = use_null_kv, splits = splits, global_feats_dim = global_feats_dim, linear_proj_keys = linear_proj_keys, attention_klass = attention_klass, tie_key_values = tie_key_values),
-                FeedForwardBlockSE3(fiber_hidden)
+                AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, rel_dist_num_fourier_features = rel_dist_num_fourier_features, use_null_kv = use_null_kv, splits = splits, global_feats_dim = global_feats_dim, linear_proj_keys = linear_proj_keys, attention_klass = attention_klass, tie_key_values = tie_key_values, norm_gated_scale = norm_gated_scale),
+                FeedForwardBlockSE3(fiber_hidden, norm_gated_scale = norm_gated_scale)
             ]))
 
         execution_class = ReversibleSequence if reversible else SequentialSequence
@@ -883,7 +892,7 @@ class SE3Transformer(nn.Module):
 
         self.conv_out = ConvSE3(fiber_hidden, fiber_out, **conv_kwargs)
 
-        self.norm = NormSE3(fiber_out, nonlin = nn.Identity()) if norm_out or reversible else nn.Identity()
+        self.norm = NormSE3(fiber_out, gated_scale = norm_gated_scale, nonlin = nn.Identity()) if norm_out or reversible else nn.Identity()
 
         self.linear_out = LinearSE3(
             fiber_out,

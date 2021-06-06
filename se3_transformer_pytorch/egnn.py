@@ -59,16 +59,18 @@ SiLU = nn.SiLU if hasattr(nn, 'SiLU') else Swish_
 # helper classes
 
 class HtypesNorm(nn.Module):
-    def __init__(self, dim, eps = 1e-8, scale_init = 1e-2):
+    def __init__(self, dim, eps = 1e-8, scale_init = 1e-2, bias_init = 1e-2):
         super().__init__()
         self.eps = eps
         scale = torch.empty(1, 1, 1, dim, 1).fill_(scale_init)
+        bias = torch.empty(1, 1, 1, dim, 1).fill_(bias_init)
         self.scale = nn.Parameter(scale)
+        self.bias = nn.Parameter(bias)
 
     def forward(self, coors):
         norm = coors.norm(dim = -1, keepdim = True)
         normed_coors = coors / norm.clamp(min = self.eps)
-        return normed_coors * (norm * self.scale)
+        return normed_coors * (norm * self.scale + self.bias)
 
 class EGNN(nn.Module):
     def __init__(

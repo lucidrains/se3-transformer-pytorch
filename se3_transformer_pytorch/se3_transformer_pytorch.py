@@ -24,7 +24,7 @@ class Fiber(nn.Module):
     ):
         super().__init__()
         if isinstance(structure, dict):
-            structure = structure.items()
+            structure = [FiberEl(degree, dim) for degree, dim in structure.items()]
         self.structure = structure
 
     @property
@@ -990,7 +990,7 @@ class SE3Transformer(nn.Module):
         dim_head = 24,
         depth = 2,
         input_degrees = 1,
-        num_degrees = 2,
+        num_degrees = None,
         output_degrees = 1,
         valid_radius = 1e5,
         reduce_dim_out = False,
@@ -1026,7 +1026,8 @@ class SE3Transformer(nn.Module):
         use_egnn = False,
         egnn_hidden_dim = 32,
         egnn_weights_clamp_value = None,
-        egnn_feedforward = False
+        egnn_feedforward = False,
+        hidden_fiber_dict = None
     ):
         super().__init__()
         dim_in = default(dim_in, dim)
@@ -1053,11 +1054,15 @@ class SE3Transformer(nn.Module):
         # edges
 
         assert not (exists(num_edge_tokens) and not exists(edge_dim)), 'edge dimension (edge_dim) must be supplied if SE3 transformer is to have edge tokens'
+
         self.edge_emb = nn.Embedding(num_edge_tokens, edge_dim) if exists(num_edge_tokens) else None
         self.has_edges = exists(edge_dim) and edge_dim > 0
 
         self.input_degrees = input_degrees
-        self.num_degrees = num_degrees
+
+        assert not (exists(num_adj_degrees) and num_adj_degrees < 1), 'make sure adjacent degrees is greater than 1'
+
+        self.num_degrees = num_degrees if exists(num_degrees) else (max(hidden_fiber_dict.keys()) + 1)
 
         output_degrees = output_degrees if not use_egnn else None
         self.output_degrees = output_degrees
@@ -1078,7 +1083,6 @@ class SE3Transformer(nn.Module):
 
         # adjacent neighbor derivation and embed
 
-        assert not (exists(num_adj_degrees) and num_adj_degrees < 1), 'make sure adjacent degrees is greater than 1'
         self.num_adj_degrees = num_adj_degrees
         self.adj_emb = nn.Embedding(num_adj_degrees + 1, adj_dim) if exists(num_adj_degrees) and adj_dim > 0 else None
 
@@ -1089,8 +1093,10 @@ class SE3Transformer(nn.Module):
         dim_in = default(dim_in, dim)
         dim_out = default(dim_out, dim)
 
+        assert exists(num_degrees) ^ exists(hidden_fiber_dict), 'either num_degrees or hidden_fiber_dict must be specified'
+
         fiber_in     = Fiber.create(input_degrees, dim_in)
-        fiber_hidden = Fiber.create(num_degrees, dim)
+        fiber_hidden = Fiber.create(num_degrees, dim) if exists(num_degrees) else Fiber(hidden_fiber_dict)
         fiber_out    = Fiber.create(output_degrees, dim_out) if exists(output_degrees) else None
 
         conv_kwargs = dict(edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, splits = splits)
@@ -1146,12 +1152,11 @@ class SE3Transformer(nn.Module):
 
         self.norm = NormSE3(fiber_out, gated_scale = norm_gated_scale, nonlin = nn.Identity()) if (norm_out or reversible) and exists(fiber_out) else nn.Identity()
 
-        final_degree = default(output_degrees, num_degrees)
         final_fiber = default(fiber_out, fiber_hidden)
 
         self.linear_out = LinearSE3(
             final_fiber,
-            Fiber.create(final_degree, 1)
+            Fiber(list(map(lambda t: FiberEl(degrees = t[0], dim = 1), final_fiber)))
         ) if reduce_dim_out else None
 
     def forward(

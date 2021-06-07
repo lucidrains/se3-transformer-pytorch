@@ -433,6 +433,32 @@ refinement = model(feats, coors, mask, edges = bonds, return_type = 1) # (2, 32,
 coors = coors + refinement  # update coors with refinement
 ```
 
+If you would like to specify individual dimensions for each of the higher types, just pass in `hidden_fiber_dict` where the dictionary is in the format {<degree>:<dim>} instead of `num_degrees`
+
+```python
+import torch
+from se3_transformer_pytorch import SE3Transformer
+
+model = SE3Transformer(
+    dim = 32,
+    num_neighbors = 8,
+    hidden_fiber_dict = {0: 32, 1: 16, 2: 8, 3: 4},
+    use_egnn = True,
+    depth = 4,
+    egnn_hidden_dim = 64,
+    egnn_weights_clamp_value = 2, 
+    reduce_dim_out = True
+).cuda()
+
+feats = torch.randn(2, 32, 32).cuda()
+coors = torch.randn(2, 32, 3).cuda()
+mask  = torch.ones(2, 32).bool().cuda()
+
+refinement = model(feats, coors, mask, return_type = 1) # (2, 32, 3)
+
+coors = coors + refinement  # update coors with refinement
+```
+
 ## Scaling (wip)
 
 This section will list ongoing efforts to make SE3 Transformer scale a little better.

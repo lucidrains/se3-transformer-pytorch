@@ -433,7 +433,7 @@ refinement = model(feats, coors, mask, edges = bonds, return_type = 1) # (2, 32,
 coors = coors + refinement  # update coors with refinement
 ```
 
-If you would like to specify individual dimensions for each of the higher types, just pass in `hidden_fiber_dict` where the dictionary is in the format {<degree>:<dim>} instead of `num_degrees`
+If you would like to specify individual dimensions for each of the higher types, just pass in `hidden_fiber_dict` where the dictionary is in the format {\<degree\>:\<dim\>} instead of `num_degrees`
 
 ```python
 import torch

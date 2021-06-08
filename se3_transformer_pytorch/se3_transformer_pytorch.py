@@ -786,12 +786,14 @@ class EGNN(nn.Module):
             SiLU()
         )
 
-        self.htype_norms = nn.ModuleDict([])
+        self.htype_norms = nn.ModuleDict({})
+        self.htype_gating = nn.ModuleDict({})
 
         for degree, dim in fiber:
             if degree == 0:
                 continue
             self.htype_norms[str(degree)] = HtypesNorm(dim)
+            self.htype_gating[str(degree)] = nn.Linear(node_dim, dim)
 
         self.htypes_mlp = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim * 4),
@@ -909,6 +911,10 @@ class EGNN(nn.Module):
 
         for degree, update_htype in update_htype_dicts.items():
             features[degree] = features[degree] + update_htype
+
+        for degree in htype_degrees:
+            gating = self.htype_gating[str(degree)](node_out).sigmoid()
+            features[degree] = features[degree] * rearrange(gating, '... -> ... ()')
 
         return features
 

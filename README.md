@@ -231,6 +231,37 @@ adj_mat = (i[:, None] <= (i[None, :] + 1)) & (i[:, None] >= (i[None, :] - 1))
 out = model(feats, coors, mask, adj_mat = adj_mat, return_type = 1)
 ```
 
+To have fine control over the dimensionality of each type, you can use the `hidden_fiber_dict` and `out_fiber_dict` keywords to pass in a dictionary with the degree to dimension values as the key / values.
+
+```python
+import torch
+from se3_transformer_pytorch import SE3Transformer
+
+model = SE3Transformer(
+    num_tokens = 28,
+    dim = 64,
+    num_edge_tokens = 4,
+    edge_dim = 16,
+    depth = 2,
+    input_degrees = 1,
+    num_degrees = 3,
+    output_degrees = 1,
+    hidden_fiber_dict = {0: 16, 1: 8, 2: 4},
+    out_fiber_dict = {0: 16, 1: 1},
+    reduce_dim_out = False
+)
+
+atoms = torch.randint(0, 28, (2, 32))
+bonds = torch.randint(0, 4, (2, 32, 32))
+coors = torch.randn(2, 32, 3)
+mask  = torch.ones(2, 32).bool()
+
+pred = model(atoms, coors, mask, edges = bonds)
+
+pred['0'] # (2, 32, 16)
+pred['1'] # (2, 32, 1, 3)
+```
+
 ## Neighbors
 
 You can further control which nodes can be considered by passing in a neighbor mask. All `False` values will be masked out of consideration.

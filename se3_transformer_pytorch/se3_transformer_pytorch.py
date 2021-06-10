@@ -1033,7 +1033,8 @@ class SE3Transformer(nn.Module):
         egnn_hidden_dim = 32,
         egnn_weights_clamp_value = None,
         egnn_feedforward = False,
-        hidden_fiber_dict = None
+        hidden_fiber_dict = None,
+        out_fiber_dict = None
     ):
         super().__init__()
         dim_in = default(dim_in, dim)
@@ -1099,11 +1100,23 @@ class SE3Transformer(nn.Module):
         dim_in = default(dim_in, dim)
         dim_out = default(dim_out, dim)
 
-        assert exists(num_degrees) ^ exists(hidden_fiber_dict), 'either num_degrees or hidden_fiber_dict must be specified'
+        assert exists(num_degrees) or exists(hidden_fiber_dict), 'either num_degrees or hidden_fiber_dict must be specified'
+        assert exists(output_degrees) or exists(out_fiber_dict), 'either output_degrees or out_fiber_dict must be specified'
 
         fiber_in     = Fiber.create(input_degrees, dim_in)
-        fiber_hidden = Fiber.create(num_degrees, dim) if exists(num_degrees) else Fiber(hidden_fiber_dict)
-        fiber_out    = Fiber.create(output_degrees, dim_out) if exists(output_degrees) else None
+
+        if exists(hidden_fiber_dict):
+            fiber_hidden = Fiber(hidden_fiber_dict)
+        elif exists(num_degrees):
+            fiber_hidden = Fiber.create(num_degrees, dim)
+
+        if exists(out_fiber_dict):
+            fiber_out = Fiber(out_fiber_dict)
+            self.output_degrees = max(out_fiber_dict.keys()) + 1
+        elif exists(output_degrees):
+            fiber_out = Fiber.create(output_degrees, dim_out)
+        else:
+            fiber_out = None
 
         conv_kwargs = dict(edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, num_fourier_features = rel_dist_num_fourier_features, splits = splits)
 

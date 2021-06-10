@@ -520,6 +520,12 @@ Or you can try deleting the cache directory, which should exist at
 $ rm -rf ~/.cache.equivariant_attention
 ```
 
+You can also designate your own directory where you want the caches to be stored, in the case that the default directory may have permission issues
+
+```bash
+CACHE_PATH=./path/to/my/cache python train.py
+```
+
 ## Testing
 
 ```bash

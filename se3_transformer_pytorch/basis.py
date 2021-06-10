@@ -7,12 +7,13 @@ from itertools import product
 from contextlib import contextmanager
 
 from se3_transformer_pytorch.irr_repr import irr_repr, spherical_harmonics
-from se3_transformer_pytorch.utils import torch_default_dtype, cache_dir, exists, to_order
+from se3_transformer_pytorch.utils import torch_default_dtype, cache_dir, exists, default, to_order
 from se3_transformer_pytorch.spherical_harmonics import clear_spherical_harmonics_cache
 
 # constants
 
-CACHE_PATH = os.path.expanduser('~/.cache.equivariant_attention') if not exists(os.environ.get('CLEAR_CACHE')) else None
+CACHE_PATH = default(os.getenv('CACHE_PATH'), os.path.expanduser('~/.cache.equivariant_attention'))
+CACHE_PATH = CACHE_PATH if not exists(os.environ.get('CLEAR_CACHE')) else None
 
 # todo (figure ot why this was hard coded in official repo)
 

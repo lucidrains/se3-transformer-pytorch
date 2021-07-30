@@ -33,7 +33,8 @@ transformer = SE3Transformer(
     num_neighbors = 0,
     attend_sparse_neighbors = True,
     num_adj_degrees = 2,
-    adj_dim = 4
+    adj_dim = 4,
+    num_degrees=2,
 )
 
 data = scn.load(

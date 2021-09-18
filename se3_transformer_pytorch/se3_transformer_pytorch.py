@@ -298,7 +298,7 @@ class RadialFunc(nn.Module):
         self.apply(self.init_)
 
     def init_(self, m):
-        if m in {nn.Linear}:
+        if isinstance(m, nn.Linear):
             nn.init.kaiming_uniform_(m.weight)
 
     def forward(self, x):

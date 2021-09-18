@@ -660,53 +660,6 @@ class OneHeadedKVAttentionSE3(nn.Module):
 
         return self.to_out(outputs)
 
-# global linear attention - only for type 0
-
-class GlobalLinearAttention(nn.Module):
-    def __init__(
-        self,
-        fiber,
-        dim_head = 64,
-        heads = 8,
-        **kwargs
-    ):
-        super().__init__()
-        inner_dim = dim_head * heads
-        self.scale = dim_head ** -0.5
-        self.heads = heads
-
-        self.to_qkv = nn.Linear(fiber[0], inner_dim * 3, bias = False)
-        self.to_out = nn.Linear(inner_dim, fiber[0])
-
-    def forward(self, features, edge_info, rel_dist, basis, global_feats = None, pos_emb = None, mask = None):
-        h = self.heads
-        device, dtype = get_tensor_device_and_dtype(features)
-
-        x = features['0'] # only working on type 0 features for global linear attention
-        x = rearrange(x, '... () -> ...')
-
-        q, k, v = self.to_qkv(x).chunk(3, dim = -1)
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = h), (q, k, v))
-
-        if exists(mask):
-            mask = rearrange(mask, 'b n -> b () n ()')
-            k = k.masked_fill(~mask, -torch.finfo(k.dtype).max)
-            v = v.masked_fill(~mask, 0.)
-
-        q = q.softmax(dim = -1)
-        k = k.softmax(dim = -2)
-
-        q *= self.scale
-
-        context = einsum('b h n d, b h n e -> b h d e', k, v)
-        attn_out = einsum('b h d e, b h n d -> b h n e', context, q)
-        attn_out = rearrange(attn_out, 'b h n d -> b n (h d)')
-        attn_out = self.to_out(attn_out)
-
-        out = map_values(lambda *args: 0, features)
-        out['0'] = rearrange(attn_out, '... -> ... ()')
-        return out
-
 class AttentionBlockSE3(nn.Module):
     def __init__(
         self,
@@ -1027,7 +980,6 @@ class SE3Transformer(nn.Module):
         tie_key_values = False,
         rotary_position = False,
         rotary_rel_dist = False,
-        global_linear_attn_every = 0,
         norm_gated_scale = False,
         use_egnn = False,
         egnn_hidden_dim = 32,
@@ -1153,8 +1105,7 @@ class SE3Transformer(nn.Module):
         else:
             layers = nn.ModuleList([])
             for ind in range(depth):
-                use_global_linear_attn = global_linear_attn_every > 0 and (ind % global_linear_attn_every) == 0
-                attention_klass = default_attention_klass if not use_global_linear_attn else GlobalLinearAttention
+                attention_klass = default_attention_klass
 
                 layers.append(nn.ModuleList([
                     AttentionBlockSE3(fiber_hidden, heads = heads, dim_head = dim_head, attend_self = attend_self, edge_dim = edge_dim, fourier_encode_dist = fourier_encode_dist, rel_dist_num_fourier_features = rel_dist_num_fourier_features, use_null_kv = use_null_kv, splits = splits, global_feats_dim = global_feats_dim, linear_proj_keys = linear_proj_keys, attention_klass = attention_klass, tie_key_values = tie_key_values, norm_gated_scale = norm_gated_scale),

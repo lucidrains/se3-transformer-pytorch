@@ -295,12 +295,6 @@ class RadialFunc(nn.Module):
             nn.Linear(mid_dim, num_freq * in_dim * out_dim)
         )
 
-        self.apply(self.init_)
-
-    def init_(self, m):
-        if isinstance(m, nn.Linear):
-            nn.init.kaiming_uniform_(m.weight)
-
     def forward(self, x):
         y = self.net(x)
         return rearrange(y, '... (o i f) -> ... o () i () f', i = self.in_dim, o = self.out_dim)

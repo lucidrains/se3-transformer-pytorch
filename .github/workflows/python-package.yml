@@ -28,7 +28,7 @@ jobs:
         python -m pip install --upgrade pip
         python setup.py install
         python -m pip install pytest
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        python -m pip install torch==1.10.0
     - name: Test with pytest
       run: |
         python setup.py pytest

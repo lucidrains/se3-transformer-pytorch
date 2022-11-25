@@ -124,7 +124,6 @@ class NormSE3(nn.Module):
         for degree, chan in fiber:
             self.transform[str(degree)] = nn.ParameterDict({
                 'scale': nn.Parameter(torch.ones(1, 1, chan)) if not gated_scale else None,
-                'bias': nn.Parameter(rand_uniform((1, 1, chan), -1e-3, 1e-3)),
                 'w_gate': nn.Parameter(rand_uniform((chan, chan), -1e-3, 1e-3)) if gated_scale else None
             })
 
@@ -137,14 +136,14 @@ class NormSE3(nn.Module):
 
             # Transform on norms
             parameters = self.transform[degree]
-            gate_weights, bias, scale = parameters['w_gate'], parameters['bias'], parameters['scale']
+            gate_weights, scale = parameters['w_gate'], parameters['scale']
 
             transformed = rearrange(norm, '... () -> ...')
 
             if not exists(scale):
                 scale = einsum('b n d, d e -> b n e', transformed, gate_weights)
 
-            transformed = self.nonlin(transformed * scale + bias)
+            transformed = self.nonlin(transformed * scale)
             transformed = rearrange(transformed, '... -> ... ()')
 
             # Nonlinearity on norm

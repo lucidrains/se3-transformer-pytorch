@@ -8,6 +8,8 @@ Implementation of <a href="https://arxiv.org/abs/2006.10503">SE3-Transformers</a
 
 <b>If you had been using any version of SE3 Transformers prior to version 0.6.0, please update. A huge bug has been uncovered by <a href="https://github.com/MattMcPartlon">@MattMcPartlon</a>, if you were not using the adjacency sparse neighbors settings and relying on nearest neighbors functionality </b>
 
+Update: It is recommended that you use <a href="https://github.com/lucidrains/equiformer-pytorch">Equiformer</a> instead
+
 ## Install
 
 ```bash
